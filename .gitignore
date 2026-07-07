@@ -1,0 +1,40 @@
+# --- Secrets / env ---
+.env
+*.local
+!.env.example
+
+# --- Go ---
+/backend/bin/
+/firmware/emulator/bin/
+*.exe
+*.exe~
+*.test
+*.out
+vendor/
+go.work
+go.work.sum
+
+# --- Node / Vite (web) ---
+node_modules/
+/web/visitor/dist/
+/web/visitor/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Docker / data volumes ---
+/deploy/data/
+/deploy/**/data/
+
+# --- LiveKit / TLS dev material ---
+*.pem
+*.key
+!deploy/livekit/livekit.yaml
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
