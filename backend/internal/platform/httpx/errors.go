@@ -4,11 +4,13 @@
 // ТЗ §13.1): единый JSON-конверт {"error":{code,message,request_id}} и маппинг
 // доменных кодов на HTTP-статусы.
 //
-// СКЕЛЕТ ЭТАПА QA: тела функций паникуют ("not implemented"). Реализацию пишет
-// этап backend — здесь только контракт под RED-тесты.
+// Реализовано на этапе backend под контракт, покрытый тестами errors_test.go.
 package httpx
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+)
 
 // Code — доменный код ошибки API (значение поля error.code в конверте).
 type Code string
@@ -45,7 +47,20 @@ type ErrorBody struct {
 //
 // Неизвестный/пустой код → 500 (INTERNAL) как безопасный дефолт.
 func HTTPStatus(code Code) int {
-	panic("not implemented: httpx.HTTPStatus")
+	switch code {
+	case CodeInvalidQR, CodeValidationError:
+		return http.StatusBadRequest
+	case CodeCallNotFound:
+		return http.StatusNotFound
+	case CodeCallInProgress:
+		return http.StatusConflict
+	case CodeDeviceOffline:
+		return http.StatusServiceUnavailable
+	case CodeInternal:
+		return http.StatusInternalServerError
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // WriteError пишет в w единый конверт ошибки:
@@ -54,5 +69,13 @@ func HTTPStatus(code Code) int {
 //   - заголовок Content-Type: application/json;
 //   - тело = {"error":{"code","message","request_id"}}.
 func WriteError(w http.ResponseWriter, code Code, message, requestID string) {
-	panic("not implemented: httpx.WriteError")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(HTTPStatus(code))
+	_ = json.NewEncoder(w).Encode(ErrorResponse{
+		Error: ErrorBody{
+			Code:      string(code),
+			Message:   message,
+			RequestID: requestID,
+		},
+	})
 }

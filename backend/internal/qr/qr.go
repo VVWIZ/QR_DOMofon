@@ -9,12 +9,16 @@
 // Сравнение подписи обязано быть константным по времени (hmac.Equal), чтобы не
 // утекала информация о правильных префиксах через тайминг.
 //
-// СКЕЛЕТ ЭТАПА QA: тела функций паникуют ("not implemented"). Реализацию пишет
-// этап backend — здесь зафиксирован только контракт (сигнатуры + ошибки), под
-// который написаны RED-тесты.
+// Реализовано на этапе backend под зафиксированный на этапе QA контракт
+// (сигнатуры + ошибки), покрытый тестами qr_test.go.
 package qr
 
-import "errors"
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+)
 
 // Ошибки валидации. Наружу (клиенту) обе маппятся в единый INVALID_QR — причина
 // клиенту не раскрывается, пишется только в лог backend (api.md, лог
@@ -40,7 +44,10 @@ type Keyring interface {
 // Sign вычисляет каноническую подпись QR для (aid, v, kid) секретом secret:
 // base64url(HMAC-SHA256("aid:v:kid", secret)) без padding, первые 32 символа.
 func Sign(aid, v, kid, secret string) string {
-	panic("not implemented: qr.Sign")
+	message := aid + ":" + v + ":" + kid
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(message))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))[:32]
 }
 
 // Verify проверяет подпись sig для (aid, v, kid), беря секрет из keyring по kid:
@@ -49,5 +56,13 @@ func Sign(aid, v, kid, secret string) string {
 //   - sig не совпал (сравнение константное по времени) → ErrInvalidSignature;
 //   - подпись верна                 → nil.
 func Verify(aid, v, kid, sig string, keyring Keyring) error {
-	panic("not implemented: qr.Verify")
+	secret, ok := keyring.Secret(kid)
+	if !ok {
+		return ErrUnknownKID
+	}
+	expected := Sign(aid, v, kid, secret)
+	if !hmac.Equal([]byte(expected), []byte(sig)) {
+		return ErrInvalidSignature
+	}
+	return nil
 }

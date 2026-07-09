@@ -1,6 +1,5 @@
 // Свежесть команды (anti-stale), PROTOCOL.md §5.2.
-//
-// СКЕЛЕТ ЭТАПА QA: тело паникует. Реализацию пишет этап firmware.
+// Реализовано под контракт, покрытый commands_test.go.
 package main
 
 import "time"
@@ -20,5 +19,9 @@ const clockSkewTolerance = 5 * time.Second
 // команда persistent session, §5.2) и для будущего (кривые часы устройства).
 // Вызывающий не должен полагаться на точную границу внутри интервала 25–35с.
 func IsStale(issuedAt, now time.Time) bool {
-	panic("not implemented: IsStale")
+	diff := now.Sub(issuedAt)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff > staleThreshold
 }

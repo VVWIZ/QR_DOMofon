@@ -32,6 +32,9 @@ pnpm-debug.log*
 *.key
 !deploy/livekit/livekit.yaml
 
+# --- Claude Code (локальные настройки) ---
+.claude/
+
 # --- IDE / OS ---
 .idea/
 .vscode/
