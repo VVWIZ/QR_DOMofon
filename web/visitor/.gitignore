@@ -1,0 +1,5 @@
+# Локальный дублёр корневого .gitignore — на случай изоляции web/visitor.
+node_modules/
+dist/
+.vite/
+*.local
