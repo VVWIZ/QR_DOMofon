@@ -79,6 +79,23 @@ func (s *Store) Get(ctx context.Context, callID string) (Session, bool, error) {
 	return sess, true, nil
 }
 
+// Update перезаписывает детали звонка (напр. State: ringing→accepted при
+// accept) и обновляет TTL обоих ключей, сохраняя busy-занятость квартиры.
+func (s *Store) Update(ctx context.Context, sess Session) error {
+	body, err := json.Marshal(sess)
+	if err != nil {
+		return fmt.Errorf("calls: marshal session: %w", err)
+	}
+	if err := s.rdb.Set(ctx, callKey(sess.CallID), body, callTTL).Err(); err != nil {
+		return fmt.Errorf("calls: update session: %w", err)
+	}
+	// busy-ключ держим синхронно с сессией (значение = callID, продлеваем TTL).
+	if err := s.rdb.Set(ctx, apartmentBusyKey(sess.ApartmentID), sess.CallID, callTTL).Err(); err != nil {
+		return fmt.Errorf("calls: refresh busy: %w", err)
+	}
+	return nil
+}
+
 // Delete снимает и детали звонка, и busy-ключ квартиры (cancel/end, §4.2).
 func (s *Store) Delete(ctx context.Context, sess Session) error {
 	if err := s.rdb.Del(ctx, callKey(sess.CallID), apartmentBusyKey(sess.ApartmentID)).Err(); err != nil {

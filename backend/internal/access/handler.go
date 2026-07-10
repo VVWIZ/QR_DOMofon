@@ -31,6 +31,7 @@ type openResponse struct {
 func (h *Handler) Open(w http.ResponseWriter, r *http.Request) {
 	rid := httpx.RequestIDFromContext(r.Context())
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KiB — тело крошечное (L1)
 	var req openRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, httpx.CodeValidationError, "Invalid request body", rid)

@@ -13,7 +13,7 @@ Backend: `http://localhost:8080`. Все ответы — JSON, время — U
 | POST | `/api/v1/calls/{id}/cancel` | Посетитель отменяет звонок | 204 | 404 `CALL_NOT_FOUND` |
 | POST | `/api/v1/calls/{id}/end` | Завершить звонок (любая сторона) | 204 | 404 `CALL_NOT_FOUND` |
 | GET | `/api/v1/resident/events` | SSE-поток событий жильца | 200 (stream) | — |
-| POST | `/api/v1/access/open` | Команда открытия двери | 200 | 404 `CALL_NOT_FOUND`, 503 `DEVICE_OFFLINE` |
+| POST | `/api/v1/access/open` | Команда открытия двери (только после accept) | 200 | 404 `CALL_NOT_FOUND`, 409 `CALL_NOT_ACCEPTED`, 503 `DEVICE_OFFLINE` |
 | GET | `/api/v1/devices` | Список устройств со статусом | 200 | — |
 | GET | `/api/v1/audit/events?limit=N` | Последние события аудита | 200 | — |
 
@@ -36,6 +36,7 @@ Backend: `http://localhost:8080`. Все ответы — JSON, время — U
 | `INVALID_QR` | 400 | Битая/чужая подпись, неизвестный `kid`, неактивная точка, неизвестный `aid` |
 | `VALIDATION_ERROR` | 400 | Некорректное тело запроса (отсутствуют обязательные поля и т.п.) |
 | `CALL_NOT_FOUND` | 404 | `call_id` не существует или сессия истекла (TTL 120с) |
+| `CALL_NOT_ACCEPTED` | 409 | Открытие двери до того, как жилец принял звонок (сессия в состоянии `ringing`). Дверь открывается только после `accept` (security M1) |
 | `CALL_IN_PROGRESS` | 409 | Квартира занята другим активным звонком |
 | `DEVICE_OFFLINE` | 503 | Прямое открытие невозможно: нет presence-ключа устройства. Для сценария **звонка** offline не блокирует — только warning (ТЗ §5.4, §13.4) |
 | `INTERNAL` | 500 | Необработанная ошибка сервера |
@@ -181,7 +182,7 @@ data: {"call_id":"b7e2a4c8-1f3d-4e5a-9c6b-8d7f0a1b2c3d"}
 { "request_id": "7f9c24e5-0d2b-4a1a-9b6e-3f8a2c5d1e07", "status": "sent" }
 ```
 
-Ответ 503 — `DEVICE_OFFLINE` (E1); ответ 404 — `CALL_NOT_FOUND`.
+Ответ 503 — `DEVICE_OFFLINE` (E1); ответ 404 — `CALL_NOT_FOUND`; ответ 409 — `CALL_NOT_ACCEPTED`, если звонок ещё не принят жильцом (сессия в состоянии `ringing`). Дверь открывается только после `POST /calls/{id}/accept` — это гарантирует, что доступом управляет жилец, а не владелец QR (security M1).
 
 ### GET /api/v1/devices
 

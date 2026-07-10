@@ -29,6 +29,7 @@ type CallSession struct {
 	AccessPointID       string
 	DeviceID            string
 	ManagementCompanyID string
+	State               string // ringing | accepted (открытие только при accepted)
 }
 
 // CallStore ищет активную сессию по call_id.
@@ -107,6 +108,13 @@ func (s *Service) Open(ctx context.Context, callID string) (OpenResult, *httpx.E
 	}
 	if !ok {
 		return OpenResult{}, httpx.NewError(httpx.CodeCallNotFound, "Call not found or expired")
+	}
+
+	// M1: дверь открывается только после того, как жилец принял звонок.
+	// Без этого владелец валидного QR мог бы открыть себе сам, минуя жильца.
+	if sess.State != "accepted" {
+		s.log.Warn("open_before_accept", "call_id", callID, "state", sess.State)
+		return OpenResult{}, httpx.NewError(httpx.CodeCallNotAccepted, "Call has not been accepted by a resident yet")
 	}
 
 	online, err := s.presence.IsOnline(ctx, sess.DeviceID)

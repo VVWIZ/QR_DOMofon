@@ -149,7 +149,16 @@ func main() {
 	})
 
 	// --- HTTP-сервер + graceful shutdown ---
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: r}
+	// Таймауты — защита от slowloris (L1). WriteTimeout НЕ ставим: он оборвал бы
+	// длинный SSE-стрим /resident/events; вместо него — IdleTimeout + лимиты тел
+	// в хендлерах (http.MaxBytesReader).
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	go func() {
 		log.Info("http_listening", "addr", cfg.HTTPAddr)
@@ -237,6 +246,7 @@ func (a callStoreAdapter) Lookup(ctx context.Context, callID string) (access.Cal
 		AccessPointID:       s.AccessPointID,
 		DeviceID:            s.DeviceID,
 		ManagementCompanyID: s.ManagementCompanyID,
+		State:               s.State,
 	}, true, nil
 }
 

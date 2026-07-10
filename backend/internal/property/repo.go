@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -67,6 +68,12 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 // поэтому берём активную квартиру дома и устройство точки. Нет строки →
 // ErrNotFound.
 func (r *Repo) ResolveByPublicID(ctx context.Context, publicID string) (Context, error) {
+	// public_id — колонка типа uuid; не-UUID вход дал бы ошибку каста (→ 500).
+	// Трактуем как «не найдено» (наружу INVALID_QR), а не как внутреннюю ошибку.
+	if _, err := uuid.Parse(publicID); err != nil {
+		return Context{}, ErrNotFound
+	}
+
 	const q = `
 		SELECT ap.id, ap.public_id, ap.label, ap.type,
 		       ap.management_company_id, ap.building_id,

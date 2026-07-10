@@ -20,6 +20,7 @@ const (
 	CodeInvalidQR       Code = "INVALID_QR"
 	CodeValidationError Code = "VALIDATION_ERROR"
 	CodeCallNotFound    Code = "CALL_NOT_FOUND"
+	CodeCallNotAccepted Code = "CALL_NOT_ACCEPTED"
 	CodeCallInProgress  Code = "CALL_IN_PROGRESS"
 	CodeDeviceOffline   Code = "DEVICE_OFFLINE"
 	CodeInternal        Code = "INTERNAL"
@@ -39,11 +40,11 @@ type ErrorBody struct {
 
 // HTTPStatus возвращает HTTP-статус для доменного кода:
 //
-//	INVALID_QR, VALIDATION_ERROR → 400
-//	CALL_NOT_FOUND               → 404
-//	CALL_IN_PROGRESS             → 409
-//	DEVICE_OFFLINE               → 503
-//	INTERNAL                     → 500
+//	INVALID_QR, VALIDATION_ERROR      → 400
+//	CALL_NOT_FOUND                    → 404
+//	CALL_NOT_ACCEPTED, CALL_IN_PROGRESS → 409
+//	DEVICE_OFFLINE                    → 503
+//	INTERNAL                          → 500
 //
 // Неизвестный/пустой код → 500 (INTERNAL) как безопасный дефолт.
 func HTTPStatus(code Code) int {
@@ -52,7 +53,7 @@ func HTTPStatus(code Code) int {
 		return http.StatusBadRequest
 	case CodeCallNotFound:
 		return http.StatusNotFound
-	case CodeCallInProgress:
+	case CodeCallNotAccepted, CodeCallInProgress:
 		return http.StatusConflict
 	case CodeDeviceOffline:
 		return http.StatusServiceUnavailable

@@ -83,6 +83,7 @@ func (h *Handler) Validate(w http.ResponseWriter, r *http.Request) {
 	log := httpx.LoggerFromContext(ctx)
 	rid := httpx.RequestIDFromContext(ctx)
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KiB — тело крошечное (L1)
 	var req validateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, httpx.CodeValidationError, "Invalid request body", rid)

@@ -210,6 +210,14 @@ func (s *Service) Accept(ctx context.Context, callID string) (AcceptResult, *htt
 		return AcceptResult{}, httpx.NewError(httpx.CodeInternal, "Internal server error")
 	}
 
+	// Фиксируем факт ответа жильца: дверь открывается только после accepted
+	// (иначе владелец QR открыл бы себе сам, минуя жильца — security M1).
+	sess.State = "accepted"
+	if err := s.sessions.Update(ctx, sess); err != nil {
+		s.log.Error("session_accept_update_failed", "error", err, "call_id", callID)
+		return AcceptResult{}, httpx.NewError(httpx.CodeInternal, "Internal server error")
+	}
+
 	s.notifier.CallAccepted(sess.ApartmentID, callID)
 
 	s.record(ctx, audit.Event{
