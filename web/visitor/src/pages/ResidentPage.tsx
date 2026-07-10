@@ -146,6 +146,8 @@ export function ResidentPage() {
         setToast({ kind: 'err', text: 'Устройство offline — дверь нельзя открыть удалённо.' });
       } else if (e instanceof ApiError && e.code === 'CALL_NOT_FOUND') {
         setToast({ kind: 'err', text: 'Сессия звонка не найдена.' });
+      } else if (e instanceof ApiError && e.code === 'CALL_NOT_ACCEPTED') {
+        setToast({ kind: 'err', text: 'Сначала примите звонок, затем открывайте дверь.' });
       } else {
         setToast({ kind: 'err', text: errorMessage(e) });
       }

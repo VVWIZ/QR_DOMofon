@@ -14,6 +14,7 @@ export type ApiErrorCode =
   | 'INVALID_QR'
   | 'VALIDATION_ERROR'
   | 'CALL_NOT_FOUND'
+  | 'CALL_NOT_ACCEPTED'
   | 'CALL_IN_PROGRESS'
   | 'DEVICE_OFFLINE'
   | 'INTERNAL';
@@ -76,7 +77,7 @@ export interface Device {
   type?: string;
   firmware_version?: string;
   status: DeviceStatus;
-  last_seen_at: string;
+  last_seen_at: string | null;
 }
 
 /** Ответ GET /api/v1/devices (200) — обёрнут в объект. */
