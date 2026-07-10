@@ -1,0 +1,63 @@
+# deploy/docker-compose.yml — ТОЛЬКО инфраструктура walking skeleton
+# (architecture.md §4.5). Backend, эмулятор и Vite запускаются на хосте
+# (go run / npm run dev) для быстрого цикла правок. Порядок запуска — README.
+#
+# dev-режим: без TLS, anonymous MQTT-auth, dev-ключи LiveKit — не для прод.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: domofon-postgres
+    environment:
+      POSTGRES_USER: domofon
+      POSTGRES_PASSWORD: domofon
+      POSTGRES_DB: domofon
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U domofon -d domofon"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: domofon-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  emqx:
+    image: emqx/emqx:5
+    container_name: domofon-emqx
+    environment:
+      # dev: разрешить анонимные подключения (PROTOCOL.md §7). НЕ ДЛЯ ПРОД.
+      EMQX_ALLOW_ANONYMOUS: "true"
+    ports:
+      - "1883:1883"    # MQTT
+      - "18083:18083"  # Dashboard (admin/public)
+    healthcheck:
+      test: ["CMD", "emqx", "ctl", "status"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+
+  livekit:
+    image: livekit/livekit-server:v1.9.0
+    container_name: domofon-livekit
+    command: ["--config", "/etc/livekit.yaml"]
+    ports:
+      - "7880:7880"        # API + signaling (ws)
+      - "7881:7881"        # RTC TCP fallback
+      - "7882:7882/udp"    # RTC UDP mux (single-port — важно для Docker Desktop)
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+
+volumes:
+  postgres-data:
