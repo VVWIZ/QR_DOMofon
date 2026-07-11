@@ -28,6 +28,12 @@ type Config struct {
 	DeviceSerial        string
 	ApartmentID         string
 	AccessPointPublicID string
+
+	// QR-секрет из окружения (prod-гэп §17.4): если QRSecret задан, он
+	// переопределяет секрет для QRKid и не хранится в БД plaintext. Пусто —
+	// секрет берётся из таблицы qr_keys (dev-сид). В проде — из KMS/Vault.
+	QRSecret string
+	QRKid    string
 }
 
 // Load загружает .env (если присутствует; отсутствие файла не ошибка) и
@@ -51,6 +57,9 @@ func Load() Config {
 		DeviceSerial:        env("DEVICE_SERIAL", "EMU-001"),
 		ApartmentID:         env("APARTMENT_ID", "33333333-3333-3333-3333-333333333333"),
 		AccessPointPublicID: env("ACCESS_POINT_PUBLIC_ID", "55555555-5555-5555-5555-555555555555"),
+
+		QRSecret: env("QR_SECRET", ""),
+		QRKid:    env("QR_KID", "dev1"),
 	}
 }
 

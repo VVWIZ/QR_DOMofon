@@ -11,8 +11,10 @@ import (
 	lksdk "github.com/livekit/server-sdk-go/v2"
 )
 
-// tokenTTL — срок жизни LiveKit-токена (демо-звонок).
-const tokenTTL = 2 * time.Hour
+// tokenTTL — срок жизни LiveKit-токена. Токен нужен только на join; после
+// подключения сессия живёт сама. 15 мин — с запасом на звонок, но без «на весь
+// день» (прод-гэп: минимизировать окно валидности).
+const tokenTTL = 15 * time.Minute
 
 // Track sources для гранта publish (ТЗ §6.1): visitor — камера+микрофон,
 // resident — только микрофон.

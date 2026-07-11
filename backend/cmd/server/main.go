@@ -80,6 +80,13 @@ func main() {
 		log.Error("keyring_load_failed", "error", err)
 		os.Exit(1)
 	}
+	// Prod-гэп §17.4: секрет подписи QR можно подать из окружения (не хранить в
+	// БД plaintext). Пусто → используется сид qr_keys (dev).
+	var qrKeyring qr.Keyring = keyring
+	if cfg.QRSecret != "" {
+		qrKeyring = qrSecretOverride{inner: keyring, kid: cfg.QRKid, secret: cfg.QRSecret}
+		log.Info("qr_secret_from_env", "kid", cfg.QRKid)
+	}
 
 	presence := devices.NewPresence(rdb)
 	deviceRepo := devices.NewRepo(pool)
@@ -97,7 +104,7 @@ func main() {
 
 	// --- Сервисы (внедрение через адаптеры границ) ---
 	callSvc := calls.NewService(
-		qrVerifierAdapter{keyring: keyring},
+		qrVerifierAdapter{keyring: qrKeyring},
 		callsPropertyAdapter{svc: propertySvc},
 		presence,
 		livekit,
@@ -117,7 +124,7 @@ func main() {
 	)
 
 	// --- Хендлеры ---
-	qrHandler := qr.NewHandler(keyring, qrPropertyAdapter{svc: propertySvc}, presence)
+	qrHandler := qr.NewHandler(qrKeyring, qrPropertyAdapter{svc: propertySvc}, presence)
 	callsHandler := calls.NewHandler(callSvc)
 	accessHandler := access.NewHandler(accessSvc)
 	devicesHandler := devices.NewHandler(deviceRepo, presence)
@@ -136,14 +143,17 @@ func main() {
 		},
 		"livekit": func(ctx context.Context) error { return livekit.Health(ctx) },
 	}))
+	// Rate-limit на публичных (неаутентифицированных) POST — защита от абуза
+	// (prod-гэп §5.6). 30 запросов/мин на IP: щедро для демо, режет флуд.
+	publicRL := httpx.RateLimit(30, time.Minute)
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/qr/validate", qrHandler.Validate)
-		r.Post("/calls/initiate", callsHandler.Initiate)
+		r.With(publicRL).Post("/qr/validate", qrHandler.Validate)
+		r.With(publicRL).Post("/calls/initiate", callsHandler.Initiate)
 		r.Post("/calls/{id}/accept", callsHandler.Accept)
 		r.Post("/calls/{id}/cancel", callsHandler.Cancel)
 		r.Post("/calls/{id}/end", callsHandler.End)
 		r.Get("/resident/events", sseHub.Handler())
-		r.Post("/access/open", accessHandler.Open)
+		r.With(publicRL).Post("/access/open", accessHandler.Open)
 		r.Get("/devices", devicesHandler.List)
 		r.Get("/audit/events", auditHandler.List)
 	})
@@ -188,6 +198,21 @@ type qrVerifierAdapter struct{ keyring qr.Keyring }
 
 func (a qrVerifierAdapter) Verify(aid, v, kid, sig string) error {
 	return qr.Verify(aid, v, kid, sig, a.keyring)
+}
+
+// qrSecretOverride переопределяет секрет для одного kid значением из окружения
+// (prod-гэп §17.4); прочие kid делегируются вложенному keyring.
+type qrSecretOverride struct {
+	inner  qr.Keyring
+	kid    string
+	secret string
+}
+
+func (o qrSecretOverride) Secret(kid string) (string, bool) {
+	if kid == o.kid {
+		return o.secret, true
+	}
+	return o.inner.Secret(kid)
 }
 
 // qrPropertyAdapter связывает qr.PropertyResolver с property.Service.

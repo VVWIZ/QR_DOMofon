@@ -23,6 +23,7 @@ const (
 	CodeCallNotAccepted Code = "CALL_NOT_ACCEPTED"
 	CodeCallInProgress  Code = "CALL_IN_PROGRESS"
 	CodeDeviceOffline   Code = "DEVICE_OFFLINE"
+	CodeRateLimit       Code = "RATE_LIMIT"
 	CodeInternal        Code = "INTERNAL"
 )
 
@@ -57,6 +58,8 @@ func HTTPStatus(code Code) int {
 		return http.StatusConflict
 	case CodeDeviceOffline:
 		return http.StatusServiceUnavailable
+	case CodeRateLimit:
+		return http.StatusTooManyRequests
 	case CodeInternal:
 		return http.StatusInternalServerError
 	default:
