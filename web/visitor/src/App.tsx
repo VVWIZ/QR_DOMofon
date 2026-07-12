@@ -1,6 +1,9 @@
 import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import { VisitorPage } from './pages/VisitorPage';
 import { ResidentPage } from './pages/ResidentPage';
+import { LoginPage } from './pages/LoginPage';
+import { AuthProvider } from './auth/AuthContext';
+import { ProtectedRoute } from './components/ProtectedRoute';
 
 function Home() {
   return (
@@ -11,6 +14,9 @@ function Home() {
         <ul className="links">
           <li>
             <Link to="/resident">Экран жильца — /resident</Link>
+          </li>
+          <li>
+            <Link to="/login">Вход (жилец / администратор) — /login</Link>
           </li>
         </ul>
         <p className="hint">
@@ -24,11 +30,21 @@ function Home() {
 
 export function App() {
   return (
-    <Routes>
-      <Route path="/v" element={<VisitorPage />} />
-      <Route path="/resident" element={<ResidentPage />} />
-      <Route path="/" element={<Home />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/v" element={<VisitorPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/resident"
+          element={
+            <ProtectedRoute requireResident>
+              <ResidentPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/" element={<Home />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AuthProvider>
   );
 }

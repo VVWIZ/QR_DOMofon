@@ -17,7 +17,48 @@ export type ApiErrorCode =
   | 'CALL_NOT_ACCEPTED'
   | 'CALL_IN_PROGRESS'
   | 'DEVICE_OFFLINE'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'RATE_LIMIT'
   | 'INTERNAL';
+
+// --- Auth (auth.md, api.md «Аутентификация») ---
+
+export type UserKind = 'resident' | 'owner' | 'mc_admin';
+
+export interface AuthApartment {
+  id: string;
+  role: string;
+}
+
+/** Профиль пользователя (ответ /auth/me и поле user в логине). */
+export interface AuthUser {
+  id: string;
+  kind: UserKind;
+  apartments: AuthApartment[];
+  mc_id: string | null;
+}
+
+/** Ответ otp/verify и admin/login. */
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: AuthUser;
+}
+
+/** Ответ /auth/refresh (без user). */
+export interface RefreshResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+/** Ответ /auth/otp/send (dev_code только в dev-режиме). */
+export interface OtpSendResponse {
+  sent: boolean;
+  dev_code?: string;
+}
 
 /** Параметры QR из ссылки посетителя: /v?aid&v&kid&sig. */
 export interface QrParams {

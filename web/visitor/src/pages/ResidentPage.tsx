@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, apiUrl, ApiError, errorMessage } from '../api/client';
 import type {
   AcceptResponse,
@@ -9,6 +10,8 @@ import type {
 } from '../api/types';
 import { CallRoom } from '../components/CallRoom';
 import { useSSE, type SSEStatus } from '../hooks/useSSE';
+import { useAuth } from '../auth/AuthContext';
+import { getAccessToken } from '../auth/tokenStore';
 
 interface ActiveCall extends AcceptResponse {
   call_id: string;
@@ -20,9 +23,13 @@ interface Toast {
   text: string;
 }
 
-const SSE_PATH = apiUrl('/api/v1/resident/events');
-
 export function ResidentPage() {
+  const { user, logout } = useAuth();
+  const nav = useNavigate();
+  // SSE защищён: access-токен в query (EventSource не шлёт заголовки, auth.md §5).
+  const ssePath = `${apiUrl('/api/v1/resident/events')}?token=${encodeURIComponent(
+    getAccessToken() ?? '',
+  )}`;
   const [incoming, setIncoming] = useState<SseCallIncoming | null>(null);
   const [active, setActive] = useState<ActiveCall | null>(null);
   const [sseStatus, setSseStatus] = useState<SSEStatus>('connecting');
@@ -53,7 +60,7 @@ export function ResidentPage() {
     setIncoming((cur) => (cur && cur.call_id === c.call_id ? null : cur));
   }, []);
 
-  useSSE(SSE_PATH, {
+  useSSE(ssePath, {
     events: {
       'call.incoming': onIncoming,
       'call.cancelled': onCancelled,
@@ -61,6 +68,11 @@ export function ResidentPage() {
     },
     onStatus: setSseStatus,
   });
+
+  const doLogout = async () => {
+    await logout();
+    nav('/login', { replace: true });
+  };
 
   // --- Опрос статуса устройств раз в 10с ---
   useEffect(() => {
@@ -161,7 +173,17 @@ export function ResidentPage() {
   return (
     <div className="page resident">
       <header className="resident-header">
-        <h1>Экран жильца</h1>
+        <div className="header-top">
+          <h1>Экран жильца</h1>
+          <button className="btn ghost small" onClick={doLogout}>
+            Выйти
+          </button>
+        </div>
+        {user && (
+          <p className="muted small">
+            {user.kind === 'owner' ? 'Владелец' : 'Жилец'} · квартир: {user.apartments.length}
+          </p>
+        )}
         <div className="status-row">
           <span className={`dot ${sseStatus === 'open' ? 'on' : 'off'}`} />
           <span className="muted">

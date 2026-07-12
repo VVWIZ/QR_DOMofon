@@ -368,3 +368,27 @@ h2 {
 .toast.err {
   background: var(--danger-2);
 }
+
+/* --- Auth UI (LoginPage, ResidentPage header) --- */
+.login-card { width: 100%; max-width: 380px; }
+.tabs { display: flex; gap: 8px; margin: 12px 0 16px; }
+.tab {
+  flex: 1; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.05); color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12); font: inherit;
+}
+.tab.active { background: rgba(90, 160, 255, 0.18); border-color: rgba(90, 160, 255, 0.5); }
+.form { display: flex; flex-direction: column; gap: 12px; }
+.form label { display: flex; flex-direction: column; gap: 6px; font-size: 0.9em; color: #b9c2d0; }
+.form input {
+  padding: 10px 12px; border-radius: 8px; font: inherit;
+  background: rgba(0, 0, 0, 0.25); color: #f0f3f8;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.form input:disabled { opacity: 0.6; }
+.btn.ghost { background: transparent; border: 1px solid rgba(255, 255, 255, 0.18); color: inherit; }
+.btn.small { padding: 5px 10px; font-size: 0.85em; }
+.header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.small { font-size: 0.85em; }
+.ok-text { color: #63d68a; font-weight: 600; }
+.err-text { color: #ff7a7a; margin-top: 12px; }
