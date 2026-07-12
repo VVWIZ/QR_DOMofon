@@ -71,9 +71,11 @@ func Load() Config {
 
 		JWTPrivateKey: env("JWT_PRIVATE_KEY", ""),
 		JWTPublicKey:  env("JWT_PUBLIC_KEY", ""),
-		// Dev по умолчанию (walking skeleton). В проде выставить AUTH_DEV_MODE=false
-		// и подать реальные ключи, иначе сервер не стартует (fail-closed).
-		AuthDevMode: envBool("AUTH_DEV_MODE", true),
+		// Secure-by-default: dev-режим ВЫКЛючен по умолчанию (забытый флаг в проде
+		// не поднимет закоммиченный dev-keypair). Для dev — выставить AUTH_DEV_MODE=true
+		// (в .env.example задано; `cp .env.example .env`). Без ключей и без dev-режима
+		// сервер не стартует (fail-closed).
+		AuthDevMode: envBool("AUTH_DEV_MODE", false),
 	}
 }
 

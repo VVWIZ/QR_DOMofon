@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"log/slog"
 	"time"
 
@@ -172,7 +173,9 @@ func (s *OtpService) Verify(ctx context.Context, phone, code string, now time.Ti
 	}
 
 	// Нет активной записи или код не совпал — считаем неверной попыткой.
-	if !ok || rec.Code != code {
+	// Сравнение кода — constant-time (защита от timing-атаки).
+	match := ok && subtle.ConstantTimeCompare([]byte(rec.Code), []byte(code)) == 1
+	if !match {
 		if ok {
 			rec.Attempts++
 			if rec.Attempts >= OtpMaxAttempts {
