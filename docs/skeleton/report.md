@@ -101,3 +101,41 @@ RLS/multi-tenancy enforcement, админки, 2FA. Заготовки под п
 идемпотентность, свежесть, активный fail-open) проверены на живой системе. Архитектура,
 контракты и модель данных заложены под масштабирование до продукта из ТЗ v1.3.
 Код собран, отревьюен, запушен; демо воспроизводимо по `RUNBOOK.md`.
+
+---
+
+## Инкремент auth/RBAC (2026-07-12)
+
+Аутентификация и RBAC поверх skeleton. Дизайн — [auth.md](auth.md), контракт — [api.md](api.md).
+
+**Скоуп:** жилец/владелец (телефон → SMS OTP мок → JWT RS256) + УК-админ (email+пароль
+bcrypt + TOTP 2FA); защита эндпоинтов + RBAC (apartment-membership на accept/open,
+роль-чек, admin-скоуп по mc). JWT access 15м + refresh 30д (Redis whitelist, ротация).
+
+**Проверено на живой системе (этап 7):**
+
+| Проверка | Результат |
+|---|---|
+| Аноним на защищённые (`/devices`, `/access/open`) | 401 ✓ |
+| OTP-логин жильца → JWT + refresh-cookie, `/me` | ✓ |
+| RBAC: жилец → admin-only, admin → resident-only | 403 (обе стороны) ✓ |
+| Admin-логин email+пароль+**TOTP** → admin-скоуп `/devices`,`/audit` по mc | ✓ |
+| Полный флоу с токеном: initiate→accept→open→**реле** | ✓ |
+| Refresh-ротация по cookie; неверный OTP → 401 | ✓ |
+| Регрессия: визитёрский `qr/validate` public | ✓ |
+
+**Тесты:** 30 юнит-тестов auth зелёные (JWT/OTP/TOTP/bcrypt/refresh/RBAC/middleware);
+regression skeleton не затронут.
+
+**Security-ревью:** блокеров нет; обход RBAC, alg-confusion, утечка токена/чужой УК —
+не найдены. Применены: `AUTH_DEV_MODE=false` (secure-by-default), constant-time OTP.
+
+**Известные minor (митигированы, к проду):** неатомарный refresh-Rotate (митигация —
+single-flight на фронте); refresh без re-check ролей в БД (митигация — access 15м);
+admin timing-enumeration по email; PII (phone) в аудите `otp_failed`; modulo-bias
+генерации OTP (ничтожно).
+
+**Прод-гэпы инкремента (вне скоупа):** реальный SMS-провайдер, CSRF-токен на /auth/refresh
+(пока SameSite=Strict), одноразовый SSE-тикет вместо `?token=`, онбординг жильцов,
+SystemAdmin, гости/курьеры, полная админка УК (только вход). Dev-keypair RS256 закоммичен
+(dev-only, в проде — из KMS).

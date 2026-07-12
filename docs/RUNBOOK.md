@@ -60,17 +60,30 @@ LiveKit (7880/7881/7882).
 
 ## 3. Backend
 
+**Auth-режим:** `AUTH_DEV_MODE` по умолчанию **false** (secure-by-default). Для dev
+нужен `.env` рядом с местом запуска (`backend/`, откуда `godotenv` его читает):
+
 ```powershell
+cp .env.example backend/.env    # AUTH_DEV_MODE=true + dev-keypair RS256
 cd backend
 go run ./cmd/server
 ```
 
-Миграции (`0001_init`, `0002_seed`) и сиды применяются автоматически при старте.
-Конфиг — из окружения с dev-дефолтами (`.env` опционален; дефолты в
-`internal/platform/config/config.go` уже указывают на localhost-сервисы и канонические
-фикстуры).
+Без `backend/.env` (и без реальных ключей) сервер не стартует — fail-closed по auth.
+Миграции (`0001_init`, `0002_seed`, `0003_auth`, `0004_auth_seed`) применяются
+автоматически при старте.
 
 Проверка: `curl http://localhost:8080/health` → `{"deps":{"livekit":"ok","mqtt":"ok","postgres":"ok","redis":"ok"},"status":"ok"}`.
+
+**Прод:** `AUTH_DEV_MODE=false` + реальные `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY` (RS256 PEM)
+из KMS/секрет-стора; `sslmode=require` в `DATABASE_URL`. Dev-keypair из `.env.example` —
+**скомпрометирован** (в репозитории), в проде заменить.
+
+**Dev-креды для входа** (сид `0004_auth_seed`, auth.md §7):
+- жилец: телефон `+77010000001` (owner: `+77010000002`) → OTP-код возвращается в
+  `dev_code` (dev-режим);
+- УК-админ: `admin@demo.example` / пароль `admin-demo-123` / TOTP-secret `JBSWY3DPEHPK3PXP`
+  (завести в приложение-аутентификатор).
 
 ---
 
