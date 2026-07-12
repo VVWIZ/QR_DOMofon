@@ -24,6 +24,8 @@ const (
 	CodeCallInProgress  Code = "CALL_IN_PROGRESS"
 	CodeDeviceOffline   Code = "DEVICE_OFFLINE"
 	CodeRateLimit       Code = "RATE_LIMIT"
+	CodeUnauthorized    Code = "UNAUTHORIZED"
+	CodeForbidden       Code = "FORBIDDEN"
 	CodeInternal        Code = "INTERNAL"
 )
 
@@ -44,6 +46,9 @@ type ErrorBody struct {
 //	INVALID_QR, VALIDATION_ERROR      → 400
 //	CALL_NOT_FOUND                    → 404
 //	CALL_NOT_ACCEPTED, CALL_IN_PROGRESS → 409
+//	UNAUTHORIZED                      → 401
+//	FORBIDDEN                         → 403
+//	RATE_LIMIT                        → 429
 //	DEVICE_OFFLINE                    → 503
 //	INTERNAL                          → 500
 //
@@ -52,14 +57,18 @@ func HTTPStatus(code Code) int {
 	switch code {
 	case CodeInvalidQR, CodeValidationError:
 		return http.StatusBadRequest
+	case CodeUnauthorized:
+		return http.StatusUnauthorized
+	case CodeForbidden:
+		return http.StatusForbidden
 	case CodeCallNotFound:
 		return http.StatusNotFound
 	case CodeCallNotAccepted, CodeCallInProgress:
 		return http.StatusConflict
-	case CodeDeviceOffline:
-		return http.StatusServiceUnavailable
 	case CodeRateLimit:
 		return http.StatusTooManyRequests
+	case CodeDeviceOffline:
+		return http.StatusServiceUnavailable
 	case CodeInternal:
 		return http.StatusInternalServerError
 	default:

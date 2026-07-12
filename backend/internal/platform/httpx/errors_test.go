@@ -24,6 +24,20 @@ func TestHTTPStatus_Mapping(t *testing.T) {
 	}
 }
 
+func TestHTTPStatus_AuthCodes(t *testing.T) {
+	// Инкремент auth/RBAC (auth.md §6): UNAUTHORIZED→401, FORBIDDEN→403.
+	cases := map[Code]int{
+		CodeUnauthorized: http.StatusUnauthorized,    // 401
+		CodeForbidden:    http.StatusForbidden,       // 403
+		CodeRateLimit:    http.StatusTooManyRequests, // 429
+	}
+	for code, want := range cases {
+		if got := HTTPStatus(code); got != want {
+			t.Errorf("HTTPStatus(%q) = %d, want %d", code, got, want)
+		}
+	}
+}
+
 func TestHTTPStatus_UnknownCodeDefaults500(t *testing.T) {
 	if got := HTTPStatus(Code("SOMETHING_ELSE")); got != http.StatusInternalServerError {
 		t.Fatalf("HTTPStatus(неизвестный код) = %d, want 500", got)
