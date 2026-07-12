@@ -1,21 +1,31 @@
 # API — Walking Skeleton (REST + SSE)
 
-Backend: `http://localhost:8080`. Все ответы — JSON, время — UTC ISO 8601 (`Z`). Аутентификации в skeleton нет (анти-скоуп). Документ описывает намерение (написан до кода); UUID в примерах — канонические фикстуры из [architecture.md](architecture.md).
+Backend: `http://localhost:8080`. Все ответы — JSON, время — UTC ISO 8601 (`Z`). Часть эндпоинтов защищена аутентификацией (JWT RS256) и RBAC — дизайн см. [auth.md](auth.md); ниже в сводке эндпоинтов колонка **Доступ** помечает каждый роут (`public` / `resident` / `admin`). Документ описывает намерение (написан до кода); UUID в примерах — канонические фикстуры из [architecture.md](architecture.md) и [auth.md](auth.md).
 
 ## Сводка эндпоинтов
 
-| Метод | Путь | Назначение | Успех | Ошибки |
-|---|---|---|---|---|
-| GET | `/health` | Живость сервиса + зависимости | 200 | — |
-| POST | `/api/v1/qr/validate` | Валидация QR-параметров | 200 | 400 `INVALID_QR`, 400 `VALIDATION_ERROR` |
-| POST | `/api/v1/calls/initiate` | Начать звонок (комната LiveKit + токен посетителя) | 200 | 400 `INVALID_QR`, 409 `CALL_IN_PROGRESS` |
-| POST | `/api/v1/calls/{id}/accept` | Жилец принимает звонок | 200 | 404 `CALL_NOT_FOUND` |
-| POST | `/api/v1/calls/{id}/cancel` | Посетитель отменяет звонок | 204 | 404 `CALL_NOT_FOUND` |
-| POST | `/api/v1/calls/{id}/end` | Завершить звонок (любая сторона) | 204 | 404 `CALL_NOT_FOUND` |
-| GET | `/api/v1/resident/events` | SSE-поток событий жильца | 200 (stream) | — |
-| POST | `/api/v1/access/open` | Команда открытия двери (только после accept) | 200 | 404 `CALL_NOT_FOUND`, 409 `CALL_NOT_ACCEPTED`, 503 `DEVICE_OFFLINE` |
-| GET | `/api/v1/devices` | Список устройств со статусом | 200 | — |
-| GET | `/api/v1/audit/events?limit=N` | Последние события аудита | 200 | — |
+| Метод | Путь | Доступ | Назначение | Успех | Ошибки |
+|---|---|---|---|---|---|
+| GET | `/health` | public | Живость сервиса + зависимости | 200 | — |
+| POST | `/api/v1/qr/validate` | public | Валидация QR-параметров | 200 | 400 `INVALID_QR`, 400 `VALIDATION_ERROR` |
+| POST | `/api/v1/calls/initiate` | public | Начать звонок (комната LiveKit + токен посетителя) | 200 | 400 `INVALID_QR`, 409 `CALL_IN_PROGRESS` |
+| POST | `/api/v1/calls/{id}/cancel` | public | Посетитель отменяет звонок (capability по `call_id`) | 204 | 404 `CALL_NOT_FOUND` |
+| POST | `/api/v1/calls/{id}/end` | public | Завершить звонок (любая сторона, capability по `call_id`) | 204 | 404 `CALL_NOT_FOUND` |
+| POST | `/api/v1/auth/otp/send` | public | Жилец/владелец: запрос SMS-OTP на телефон | 200 | 400 `VALIDATION_ERROR`, 429 `RATE_LIMIT` |
+| POST | `/api/v1/auth/otp/verify` | public | Жилец/владелец: проверка OTP → выдача токенов | 200 | 401 `UNAUTHORIZED`, 429 `RATE_LIMIT` |
+| POST | `/api/v1/auth/admin/login` | public | УК-админ: email+пароль+TOTP → выдача токенов | 200 | 401 `UNAUTHORIZED`, 429 `RATE_LIMIT` |
+| POST | `/api/v1/auth/refresh` | public (по refresh-cookie) | Ротация: refresh-cookie → новый access + refresh | 200 | 401 `UNAUTHORIZED` |
+| POST | `/api/v1/auth/logout` | public (по refresh-cookie) | Отзыв refresh (DEL whitelist) + очистка cookie | 204 | — |
+| GET | `/api/v1/auth/me` | authn (любой kind) | Профиль текущего пользователя | 200 | 401 `UNAUTHORIZED` |
+| POST | `/api/v1/calls/{id}/accept` | resident | Жилец/владелец принимает звонок | 200 | 401 `UNAUTHORIZED`, 403 `FORBIDDEN`, 404 `CALL_NOT_FOUND` |
+| POST | `/api/v1/access/open` | resident | Команда открытия двери (только после accept) | 200 | 401 `UNAUTHORIZED`, 403 `FORBIDDEN`, 404 `CALL_NOT_FOUND`, 409 `CALL_NOT_ACCEPTED`, 503 `DEVICE_OFFLINE` |
+| GET | `/api/v1/resident/events` | resident (токен в `?token=`) | SSE-поток событий жильца | 200 (stream) | 401 `UNAUTHORIZED` |
+| GET | `/api/v1/devices` | admin | Список устройств со статусом (скоуп по `mc_id`) | 200 | 401 `UNAUTHORIZED`, 403 `FORBIDDEN` |
+| GET | `/api/v1/audit/events?limit=N` | admin | Последние события аудита (скоуп по `mc_id`) | 200 | 401 `UNAUTHORIZED`, 403 `FORBIDDEN` |
+
+**Доступ:** `public` — без токена (публичные POST под лимитером `publicRL` 30 req/мин на IP: `qr/validate`, `calls/initiate`, `calls/{id}/cancel`, `calls/{id}/end`); `/auth/*` — публичные, но со своими лимитерами (см. [auth.md](auth.md)). `resident` — требуется валидный access-JWT с `kind ∈ {resident, owner}` (middleware `RequireResident`) + доменная проверка принадлежности к квартире на `accept`/`access/open`. `admin` — `kind = mc_admin` (middleware `RequireAdmin`), выборки ограничены `management_company_id` из claims. `authn` — любой валидный токен без ограничения роли.
+
+> **Изменение контракта (инкремент auth):** `POST /calls/{id}/accept` и `POST /access/open` переехали из публичных в **resident-only**; `access/open` при этом уходит из-под лимитера `publicRL`. `cancel`/`end` остаются публичными — правом на них владеет любой, кто знает `call_id` (capability-модель, ТЗ §5.6): у посетителя нет аккаунта.
 
 ## Формат ошибок (ТЗ §13.1)
 
@@ -39,10 +49,156 @@ Backend: `http://localhost:8080`. Все ответы — JSON, время — U
 | `CALL_NOT_ACCEPTED` | 409 | Открытие двери до того, как жилец принял звонок (сессия в состоянии `ringing`). Дверь открывается только после `accept` (security M1) |
 | `CALL_IN_PROGRESS` | 409 | Квартира занята другим активным звонком |
 | `DEVICE_OFFLINE` | 503 | Прямое открытие невозможно: нет presence-ключа устройства. Для сценария **звонка** offline не блокирует — только warning (ТЗ §5.4, §13.4) |
-| `RATE_LIMIT` | 429 | Превышен лимит частоты на публичных POST (30 req/мин на IP): `qr/validate`, `calls/initiate`, `access/open` (ТЗ §5.6) |
+| `UNAUTHORIZED` | 401 | Токен отсутствует / просрочен / невалидная подпись; неверный OTP; неверные креды или TOTP админа; refresh не в whitelist (reuse/отозван) |
+| `FORBIDDEN` | 403 | Токен валиден, но роли недостаточно (`RequireResident`/`RequireAdmin`) либо пользователь не привязан к целевой квартире (проверка apartment-membership на `accept`/`access/open`) |
+| `RATE_LIMIT` | 429 | Превышен лимит частоты. Публичные POST под `publicRL` (30 req/мин на IP): `qr/validate`, `calls/initiate`, `calls/{id}/cancel`, `calls/{id}/end` (ТЗ §5.6). Отдельные лимитеры у `/auth/otp/*` и `/auth/admin/login` (см. [auth.md](auth.md) §OTP-лимиты). **Примечание:** `access/open` вышел из `publicRL` — теперь resident-only |
 | `INTERNAL` | 500 | Необработанная ошибка сервера |
 
 `request_id` в конверте — идентификатор HTTP-запроса для корреляции с логами (не путать с `request_id` MQTT-команды).
+
+**Алиасы ТЗ §13.4.** ТЗ упоминает коды `TOKEN_EXPIRED` и `ACCESS_DENIED`. В реализации они **не выделяются** отдельно: просроченный/невалидный токен → `UNAUTHORIZED` (401), отказ по роли/принадлежности → `FORBIDDEN` (403). Т.е. `TOKEN_EXPIRED` — частный случай `UNAUTHORIZED`, `ACCESS_DENIED` — синоним `FORBIDDEN`. Клиент различает истечение токена по HTTP-статусу 401 и запускает single-flight refresh (см. [auth.md](auth.md)).
+
+## Аутентификация
+
+Дизайн, модель ролей, потоки и жизненный цикл токенов — в [auth.md](auth.md). Здесь — контракт HTTP.
+
+**Токены.** Access — JWT RS256, TTL 15 мин, stateless, передаётся в заголовке `Authorization: Bearer <access>`. Refresh — JWT RS256, TTL 30 дней, живёт в whitelist Redis (`auth:refresh:{jti}`), клиенту отдаётся **только** как HttpOnly-cookie и в теле ответов не фигурирует.
+
+**Refresh-cookie** (ставится на `otp/verify`, `admin/login`, `refresh`):
+
+```
+Set-Cookie: refresh_token=<JWT>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age=2592000
+```
+
+`Path=/api/v1/auth` — cookie уходит только на auth-эндпоинты. `logout` очищает её (`Max-Age=0`).
+
+**Claims access-токена** (см. [auth.md](auth.md) §JWT):
+
+```json
+{
+  "sub": "77777777-7777-7777-7777-777777777777",
+  "kind": "resident",
+  "roles": [
+    { "apartment_id": "33333333-3333-3333-3333-333333333333", "role": "resident", "can_create_guests": false }
+  ],
+  "mc_id": null,
+  "jti": "…",
+  "iat": 1752300000,
+  "exp": 1752300900,
+  "typ": "access"
+}
+```
+
+У `mc_admin` массив `roles` пуст, а `mc_id` = UUID управляющей компании. `typ` различает `access` и `refresh`.
+
+### POST /api/v1/auth/otp/send
+
+Жилец/владелец запрашивает OTP-код на телефон. Лимиты: не более 3 запросов на телефон за 10 мин, иначе 429 (см. [auth.md](auth.md) §OTP-лимиты). В dev-режиме код возвращается в поле `dev_code` (в проде поля нет — код уходит по SMS).
+
+Запрос:
+
+```json
+{ "phone": "+77010000001" }
+```
+
+Ответ 200 (dev):
+
+```json
+{ "sent": true, "dev_code": "123456" }
+```
+
+Ответ 429 — `RATE_LIMIT` (лимит запросов или телефон во временной блокировке).
+
+### POST /api/v1/auth/otp/verify
+
+Проверка OTP. Успех → выдача пары токенов. Неверный код → 401; на 5-й неверной попытке телефон блокируется на 30 мин (ТЗ §12.4).
+
+Запрос:
+
+```json
+{ "phone": "+77010000001", "code": "123456" }
+```
+
+Ответ 200 (+ `Set-Cookie: refresh_token=…`):
+
+```json
+{
+  "access_token": "<JWT RS256>",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": {
+    "id": "77777777-7777-7777-7777-777777777777",
+    "kind": "resident",
+    "apartments": [ { "id": "33333333-3333-3333-3333-333333333333", "role": "resident" } ],
+    "mc_id": null
+  }
+}
+```
+
+Ответ 401 — `UNAUTHORIZED` (нет активного OTP / неверный код / телефон заблокирован); 429 — `RATE_LIMIT`.
+
+### POST /api/v1/auth/admin/login
+
+УК-админ: email + пароль (bcrypt) + TOTP-код (2FA). Все три обязательны; при любой ошибке — единый 401 без раскрытия, что именно не совпало.
+
+Запрос:
+
+```json
+{ "email": "admin@demo.example", "password": "admin-demo-123", "totp_code": "000000" }
+```
+
+Ответ 200 (+ `Set-Cookie: refresh_token=…`) — та же форма, что у `otp/verify`, `kind` = `mc_admin`, `mc_id` заполнен:
+
+```json
+{
+  "access_token": "<JWT RS256>",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": {
+    "id": "99999999-9999-9999-9999-999999999999",
+    "kind": "mc_admin",
+    "apartments": [],
+    "mc_id": "11111111-1111-1111-1111-111111111111"
+  }
+}
+```
+
+Ответ 401 — `UNAUTHORIZED` (неверный email/пароль/TOTP); 429 — `RATE_LIMIT`.
+
+### POST /api/v1/auth/refresh
+
+Тела нет — refresh берётся из HttpOnly-cookie. Ротация (ТЗ §13.4, [auth.md](auth.md) §refresh): проверка `jti` в whitelist → `DEL` старого → выдача новой пары → `SET` нового `jti`. Отправка украденного/уже использованного refresh (его `jti` уже удалён) → 401. Redis недоступен → fail-closed (401).
+
+Ответ 200 (+ новый `Set-Cookie: refresh_token=…`):
+
+```json
+{ "access_token": "<JWT RS256>", "token_type": "Bearer", "expires_in": 900 }
+```
+
+Ответ 401 — `UNAUTHORIZED` (нет cookie / `jti` не в whitelist / истёк / Redis недоступен).
+
+### POST /api/v1/auth/logout
+
+Отзывает refresh: `DEL auth:refresh:{jti}` и очистка cookie. Идемпотентно. Access-токены остаются валидными до истечения их 15-мин TTL (stateless — не отзываются).
+
+Ответ **204 No Content** (+ `Set-Cookie: refresh_token=; Max-Age=0`).
+
+### GET /api/v1/auth/me
+
+Требует `Authorization: Bearer <access>`. Возвращает профиль из claims (без похода в БД).
+
+Ответ 200:
+
+```json
+{
+  "id": "77777777-7777-7777-7777-777777777777",
+  "kind": "resident",
+  "apartments": [ { "id": "33333333-3333-3333-3333-333333333333", "role": "resident" } ],
+  "mc_id": null
+}
+```
+
+Ответ 401 — `UNAUTHORIZED` (нет/невалиден/просрочен токен).
 
 ## Эндпоинты
 
