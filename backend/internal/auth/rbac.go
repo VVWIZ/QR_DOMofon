@@ -5,12 +5,12 @@ package auth
 
 // IsResident — kind даёт жилец/владелец доступ (resident || owner).
 func (k Kind) IsResident() bool {
-	panic("not implemented: auth.Kind.IsResident")
+	return k == KindResident || k == KindOwner
 }
 
 // IsAdmin — kind = mc_admin (УК-админ).
 func (k Kind) IsAdmin() bool {
-	panic("not implemented: auth.Kind.IsAdmin")
+	return k == KindAdmin
 }
 
 // AllowApartment сообщает, привязан ли владелец claims к квартире apartmentID
@@ -18,5 +18,10 @@ func (k Kind) IsAdmin() bool {
 // admin не имеет apartment-доступа (доменная проверка на accept/access-open,
 // auth.md §1).
 func AllowApartment(c Claims, apartmentID string) bool {
-	panic("not implemented: auth.AllowApartment")
+	for _, r := range c.Roles {
+		if r.ApartmentID == apartmentID {
+			return true
+		}
+	}
+	return false
 }

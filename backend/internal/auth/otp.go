@@ -2,11 +2,27 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"time"
 
 	"domofon/backend/internal/platform/httpx"
 )
+
+// otpDigits — алфавит для генерации 6-значного кода.
+const otpDigits = "0123456789"
+
+// generateOtpCode генерирует n-значный числовой код на crypto/rand.
+func generateOtpCode(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for i := range buf {
+		buf[i] = otpDigits[int(buf[i])%len(otpDigits)]
+	}
+	return string(buf), nil
+}
 
 // Политика OTP (auth.md §4, ТЗ §12.4).
 const (
@@ -68,7 +84,10 @@ func NewDevSender(log *slog.Logger) *DevSender {
 
 // Send логирует код и возвращает его же как devCode.
 func (d *DevSender) Send(ctx context.Context, phone, code string) (string, error) {
-	panic("not implemented: auth.DevSender.Send")
+	if d.log != nil {
+		d.log.InfoContext(ctx, "otp dev code issued", "phone", phone, "code", code)
+	}
+	return code, nil
 }
 
 // SendResult — результат OtpService.Send (dev-код присутствует только в dev).
@@ -98,7 +117,38 @@ func NewOtpService(store OtpStore, sender OtpSender, log *slog.Logger) *OtpServi
 //
 // Ответ не раскрывает существование номера (успех при отсутствии троттла).
 func (s *OtpService) Send(ctx context.Context, phone string, now time.Time) (SendResult, *httpx.Error) {
-	panic("not implemented: auth.OtpService.Send")
+	blocked, err := s.store.IsBlocked(ctx, phone, now)
+	if err != nil {
+		return SendResult{}, httpx.NewError(httpx.CodeInternal, "otp store error")
+	}
+	if blocked {
+		return SendResult{}, httpx.NewError(httpx.CodeRateLimit, "too many requests")
+	}
+
+	count, err := s.store.IncrRequests(ctx, phone, OtpRequestWindow, now)
+	if err != nil {
+		return SendResult{}, httpx.NewError(httpx.CodeInternal, "otp store error")
+	}
+	if count > OtpMaxRequests {
+		return SendResult{}, httpx.NewError(httpx.CodeRateLimit, "too many requests")
+	}
+
+	code, err := generateOtpCode(OtpCodeLen)
+	if err != nil {
+		return SendResult{}, httpx.NewError(httpx.CodeInternal, "otp generation failed")
+	}
+	// Новая запись обнуляет счётчик попыток (attempts=0) — свежий Send сбрасывает
+	// прогресс к блокировке.
+	rec := OtpRecord{Code: code, Attempts: 0, ExpiresAt: now.Add(OtpTTL)}
+	if err := s.store.SetOTP(ctx, phone, rec); err != nil {
+		return SendResult{}, httpx.NewError(httpx.CodeInternal, "otp store error")
+	}
+
+	devCode, err := s.sender.Send(ctx, phone, code)
+	if err != nil {
+		return SendResult{}, httpx.NewError(httpx.CodeInternal, "otp send failed")
+	}
+	return SendResult{Sent: true, DevCode: devCode}, nil
 }
 
 // Verify сверяет code с активной записью OTP на момент now:
@@ -108,5 +158,36 @@ func (s *OtpService) Send(ctx context.Context, phone string, now time.Time) (Sen
 //   - верный код в пределах TTL → nil; запись потребляется (DelOTP), счётчик
 //     попыток сбрасывается.
 func (s *OtpService) Verify(ctx context.Context, phone, code string, now time.Time) *httpx.Error {
-	panic("not implemented: auth.OtpService.Verify")
+	blocked, err := s.store.IsBlocked(ctx, phone, now)
+	if err != nil {
+		return httpx.NewError(httpx.CodeInternal, "otp store error")
+	}
+	if blocked {
+		return httpx.NewError(httpx.CodeRateLimit, "too many requests")
+	}
+
+	rec, ok, err := s.store.GetOTP(ctx, phone, now)
+	if err != nil {
+		return httpx.NewError(httpx.CodeInternal, "otp store error")
+	}
+
+	// Нет активной записи или код не совпал — считаем неверной попыткой.
+	if !ok || rec.Code != code {
+		if ok {
+			rec.Attempts++
+			if rec.Attempts >= OtpMaxAttempts {
+				// На OtpMaxAttempts-й неверной попытке — блокировка телефона.
+				_ = s.store.Block(ctx, phone, now.Add(OtpBlockTTL))
+			} else {
+				_ = s.store.SetOTP(ctx, phone, rec)
+			}
+		}
+		return httpx.NewError(httpx.CodeUnauthorized, "invalid or expired code")
+	}
+
+	// Верный код в пределах TTL — потребляем запись.
+	if err := s.store.DelOTP(ctx, phone); err != nil {
+		return httpx.NewError(httpx.CodeInternal, "otp store error")
+	}
+	return nil
 }

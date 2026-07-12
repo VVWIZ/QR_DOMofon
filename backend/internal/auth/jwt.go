@@ -5,21 +5,16 @@
 // доменную логику: подпись/валидация JWT RS256, bcrypt-пароли, TOTP, политика
 // OTP-лимитов и whitelist refresh-токенов (последние два — поверх инъектируемых
 // Redis-подобных интерфейсов, чтобы юнит-тесты шли без реального Redis).
-//
-// ВНИМАНИЕ: на этапе QA тела функций — скелет (panic "not implemented"). Этап
-// backend заменяет panic на реализацию под зафиксированный здесь контракт
-// (сигнатуры + тесты). Сигнатуры менять нельзя.
 package auth
 
 import (
 	"crypto/rsa"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
-
-// keep jwt/v5 direct-зависимостью, пока Sign/Parse — скелет (см. go.mod).
-var _ = jwt.SigningMethodRS256
 
 // Kind — тип пользователя (значение claim "kind", auth.md §1).
 type Kind string
@@ -64,6 +59,27 @@ type Claims struct {
 	Type      TokenType       `json:"typ"`
 }
 
+// signedClaims оборачивает доменные Claims в интерфейс jwt.Claims. Поля Claims
+// промоутятся в JSON (sub/kind/roles/mc_id/jti/iat/exp/typ) как есть — так
+// round-trip Sign→Parse возвращает идентичную структуру. Методы Get* дают
+// валидатору jwt/v5 доступ к exp/iat для проверки срока.
+type signedClaims struct {
+	Claims
+}
+
+func (c signedClaims) GetExpirationTime() (*jwt.NumericDate, error) {
+	return jwt.NewNumericDate(time.Unix(c.ExpiresAt, 0)), nil
+}
+
+func (c signedClaims) GetIssuedAt() (*jwt.NumericDate, error) {
+	return jwt.NewNumericDate(time.Unix(c.IssuedAt, 0)), nil
+}
+
+func (c signedClaims) GetNotBefore() (*jwt.NumericDate, error) { return nil, nil }
+func (c signedClaims) GetIssuer() (string, error)              { return "", nil }
+func (c signedClaims) GetSubject() (string, error)             { return c.Subject, nil }
+func (c signedClaims) GetAudience() (jwt.ClaimStrings, error)  { return nil, nil }
+
 // Verifier валидирует access-токен (инъектируется в middleware; боевая
 // реализация — RSAVerifier поверх публичного ключа). Абстракция позволяет
 // тестировать middleware без RSA (стаб в тесте).
@@ -77,14 +93,27 @@ type Verifier interface {
 // JWT. Поля claims (в т.ч. exp/iat/typ) кодируются как есть — вызывающий сам
 // задаёт срок жизни и тип токена.
 func Sign(priv *rsa.PrivateKey, claims Claims) (string, error) {
-	panic("not implemented: auth.Sign")
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, signedClaims{Claims: claims})
+	return tok.SignedString(priv)
 }
 
 // Parse проверяет подпись token публичным ключом (RS256) и срок действия (exp),
 // возвращая распарсенные claims. Ошибка при неверной подписи или истёкшем
 // токене. typ НЕ проверяется — это делает VerifyAccess.
 func Parse(pub *rsa.PublicKey, token string) (Claims, error) {
-	panic("not implemented: auth.Parse")
+	var sc signedClaims
+	_, err := jwt.ParseWithClaims(token, &sc, func(t *jwt.Token) (any, error) {
+		// Жёстко фиксируем алгоритм RS256: чужой alg (в т.ч. подмена на none
+		// или HMAC с публичным ключом как секретом) — отказ.
+		if t.Method.Alg() != jwt.SigningMethodRS256.Alg() {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return pub, nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}))
+	if err != nil {
+		return Claims{}, err
+	}
+	return sc.Claims, nil
 }
 
 // RSAVerifier — боевая реализация Verifier поверх публичного RSA-ключа.
@@ -99,5 +128,12 @@ func NewRSAVerifier(pub *rsa.PublicKey) *RSAVerifier {
 
 // VerifyAccess = Parse + требование typ=access (иначе ошибка).
 func (v *RSAVerifier) VerifyAccess(token string) (Claims, error) {
-	panic("not implemented: auth.RSAVerifier.VerifyAccess")
+	c, err := Parse(v.pub, token)
+	if err != nil {
+		return Claims{}, err
+	}
+	if c.Type != TypeAccess {
+		return Claims{}, errors.New("token is not an access token")
+	}
+	return c, nil
 }
