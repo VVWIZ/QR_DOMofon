@@ -39,12 +39,15 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 	return &Repo{pool: pool}
 }
 
-// List возвращает все устройства (для GET /api/v1/devices).
-func (r *Repo) List(ctx context.Context) ([]Device, error) {
+// List возвращает устройства управляющей компании mcID (скоуп admin по
+// management_company_id из claims, auth.md §5). Сравнение через ::text — пустой
+// mcID даёт пустой результат без ошибки каста uuid.
+func (r *Repo) List(ctx context.Context, mcID string) ([]Device, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, serial, access_point_id, type, firmware_version, last_seen_at
 		FROM devices
-		ORDER BY serial`)
+		WHERE management_company_id::text = $1
+		ORDER BY serial`, mcID)
 	if err != nil {
 		return nil, fmt.Errorf("devices: list: %w", err)
 	}

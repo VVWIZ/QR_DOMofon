@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"domofon/backend/internal/auth"
 	"domofon/backend/internal/platform/httpx"
 )
 
@@ -34,7 +35,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := httpx.LoggerFromContext(ctx)
 
-	devices, err := h.repo.List(ctx)
+	// Скоуп admin: список ограничен УК из claims (auth.md §5).
+	claims, _ := auth.ClaimsFromContext(ctx)
+	devices, err := h.repo.List(ctx, claims.MCID)
 	if err != nil {
 		log.Error("devices_list_failed", "error", err)
 		httpx.WriteError(w, httpx.CodeInternal, "Failed to list devices", httpx.RequestIDFromContext(ctx))

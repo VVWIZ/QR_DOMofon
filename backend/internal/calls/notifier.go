@@ -1,6 +1,7 @@
 package calls
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -36,40 +37,62 @@ type sseEvent struct {
 	data []byte
 }
 
-// SSEHub — широковещательный SSE-хаб (реализация Notifier + HTTP-хендлер
-// /resident/events). В skeleton одна захардкоженная квартира без auth, поэтому
-// apartmentID не фильтруется — события уходят всем подписчикам.
+// SSEHub — per-apartment SSE-хаб (реализация Notifier + HTTP-хендлер
+// /resident/events). События рассылаются только подписчикам конкретной квартиры
+// (auth.md §5, RBAC): подписчик получает потоки квартир, к которым привязан его
+// токен (резолвер извлекает apartment_id из claims контекста).
 type SSEHub struct {
-	log  *slog.Logger
-	mu   sync.Mutex
-	subs map[chan sseEvent]struct{}
+	log      *slog.Logger
+	resolver ApartmentResolver
+	mu       sync.Mutex
+	subs     map[string]map[chan sseEvent]struct{}
 }
 
-// NewSSEHub создаёт пустой хаб.
-func NewSSEHub(log *slog.Logger) *SSEHub {
-	return &SSEHub{log: log, subs: make(map[chan sseEvent]struct{})}
+// ApartmentResolver возвращает квартиры текущего запроса (из claims контекста).
+// Инъектируется адаптером cmd/server (auth.ClaimsFromContext → apartment_id ролей).
+type ApartmentResolver func(ctx context.Context) []string
+
+// NewSSEHub создаёт пустой хаб с резолвером квартир подписчика.
+func NewSSEHub(log *slog.Logger, resolver ApartmentResolver) *SSEHub {
+	return &SSEHub{
+		log:      log,
+		resolver: resolver,
+		subs:     make(map[string]map[chan sseEvent]struct{}),
+	}
 }
 
-func (h *SSEHub) subscribe() chan sseEvent {
+// subscribe регистрирует новый канал для всех квартир apartments.
+func (h *SSEHub) subscribe(apartments []string) chan sseEvent {
 	ch := make(chan sseEvent, 16)
 	h.mu.Lock()
-	h.subs[ch] = struct{}{}
+	for _, apt := range apartments {
+		if h.subs[apt] == nil {
+			h.subs[apt] = make(map[chan sseEvent]struct{})
+		}
+		h.subs[apt][ch] = struct{}{}
+	}
 	h.mu.Unlock()
 	return ch
 }
 
-func (h *SSEHub) unsubscribe(ch chan sseEvent) {
+// unsubscribe снимает канал со всех его квартир и закрывает его.
+func (h *SSEHub) unsubscribe(ch chan sseEvent, apartments []string) {
 	h.mu.Lock()
-	if _, ok := h.subs[ch]; ok {
-		delete(h.subs, ch)
-		close(ch)
+	for _, apt := range apartments {
+		if m, ok := h.subs[apt]; ok {
+			delete(m, ch)
+			if len(m) == 0 {
+				delete(h.subs, apt)
+			}
+		}
 	}
+	close(ch)
 	h.mu.Unlock()
 }
 
-// emit сериализует payload и неблокирующе рассылает подписчикам (медленный
-// клиент пропускает событие, а не блокирует хаб).
-func (h *SSEHub) emit(name string, payload any) {
+// emit сериализует payload и неблокирующе рассылает подписчикам квартиры
+// apartmentID (медленный клиент пропускает событие, а не блокирует хаб).
+func (h *SSEHub) emit(apartmentID, name string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		h.log.Error("sse_marshal_failed", "event", name, "error", err)
@@ -77,31 +100,33 @@ func (h *SSEHub) emit(name string, payload any) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for ch := range h.subs {
+	for ch := range h.subs[apartmentID] {
 		select {
 		case ch <- sseEvent{name: name, data: data}:
 		default:
-			h.log.Warn("sse_client_slow_dropped", "event", name)
+			h.log.Warn("sse_client_slow_dropped", "event", name, "apartment_id", apartmentID)
 		}
 	}
 }
 
-// CallIncoming рассылает call.incoming.
-func (h *SSEHub) CallIncoming(_ string, p CallIncomingPayload) {
-	h.emit("call.incoming", p)
+// CallIncoming рассылает call.incoming подписчикам квартиры.
+func (h *SSEHub) CallIncoming(apartmentID string, p CallIncomingPayload) {
+	h.emit(apartmentID, "call.incoming", p)
 }
 
-// CallCancelled рассылает call.cancelled.
-func (h *SSEHub) CallCancelled(_ string, callID string) {
-	h.emit("call.cancelled", map[string]string{"call_id": callID})
+// CallCancelled рассылает call.cancelled подписчикам квартиры.
+func (h *SSEHub) CallCancelled(apartmentID, callID string) {
+	h.emit(apartmentID, "call.cancelled", map[string]string{"call_id": callID})
 }
 
-// CallAccepted рассылает call.accepted.
-func (h *SSEHub) CallAccepted(_ string, callID string) {
-	h.emit("call.accepted", map[string]string{"call_id": callID})
+// CallAccepted рассылает call.accepted подписчикам квартиры.
+func (h *SSEHub) CallAccepted(apartmentID, callID string) {
+	h.emit(apartmentID, "call.accepted", map[string]string{"call_id": callID})
 }
 
 // Handler — GET /api/v1/resident/events (text/event-stream, ping каждые 15с).
+// Подписывает клиента только на квартиры из его claims (резолвер). Ставится
+// после Authenticator+RequireResident (claims в контексте).
 func (h *SSEHub) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
@@ -110,13 +135,15 @@ func (h *SSEHub) Handler() http.HandlerFunc {
 			return
 		}
 
+		apartments := h.resolver(r.Context())
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
 
-		ch := h.subscribe()
-		defer h.unsubscribe(ch)
+		ch := h.subscribe(apartments)
+		defer h.unsubscribe(ch, apartments)
 
 		// Начальный ping — открыть поток немедленно.
 		fmt.Fprint(w, ": ping\n\n")

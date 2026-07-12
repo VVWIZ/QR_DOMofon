@@ -5,6 +5,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -34,6 +35,13 @@ type Config struct {
 	// секрет берётся из таблицы qr_keys (dev-сид). В проде — из KMS/Vault.
 	QRSecret string
 	QRKid    string
+
+	// Auth (auth.md §3). Ключи RS256 в PEM. Пусто + AuthDevMode → фиксированный
+	// dev-keypair из auth.keys (токены переживают рестарт). Пусто + !AuthDevMode
+	// → fail-closed (сервер не стартует). godotenv раскрывает \n в PEM-значениях.
+	JWTPrivateKey string
+	JWTPublicKey  string
+	AuthDevMode   bool
 }
 
 // Load загружает .env (если присутствует; отсутствие файла не ошибка) и
@@ -60,6 +68,12 @@ func Load() Config {
 
 		QRSecret: env("QR_SECRET", ""),
 		QRKid:    env("QR_KID", "dev1"),
+
+		JWTPrivateKey: env("JWT_PRIVATE_KEY", ""),
+		JWTPublicKey:  env("JWT_PUBLIC_KEY", ""),
+		// Dev по умолчанию (walking skeleton). В проде выставить AUTH_DEV_MODE=false
+		// и подать реальные ключи, иначе сервер не стартует (fail-closed).
+		AuthDevMode: envBool("AUTH_DEV_MODE", true),
 	}
 }
 
@@ -69,4 +83,21 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool парсит булеву переменную окружения (true/1/yes → true; false/0/no →
+// false); отсутствие/пустое/нераспознанное значение → fallback.
+func envBool(key string, fallback bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
 }

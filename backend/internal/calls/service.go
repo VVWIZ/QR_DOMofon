@@ -43,6 +43,14 @@ type PresenceChecker interface {
 	IsOnline(ctx context.Context, deviceID string) (bool, error)
 }
 
+// Authorizer сверяет привязку текущего пользователя (claims из ctx) к квартире
+// сессии. Nil-ошибка = доступ разрешён; иначе → 403 FORBIDDEN. Интерфейс на
+// стороне потребителя; реализация — адаптер в cmd/server поверх
+// auth.ClaimsFromContext + auth.AllowApartment (auth.md §1, §5).
+type Authorizer interface {
+	AllowApartment(ctx context.Context, apartmentID string) error
+}
+
 // Media — комнаты и токены LiveKit (реализация — *LiveKit).
 type Media interface {
 	CreateRoom(ctx context.Context, room string) error
@@ -84,6 +92,7 @@ type Service struct {
 	media    Media
 	notifier Notifier
 	sessions *Store
+	authz    Authorizer
 	audit    audit.Recorder
 	log      *slog.Logger
 }
@@ -96,6 +105,7 @@ func NewService(
 	media Media,
 	notifier Notifier,
 	sessions *Store,
+	authz Authorizer,
 	recorder audit.Recorder,
 	log *slog.Logger,
 ) *Service {
@@ -106,6 +116,7 @@ func NewService(
 		media:    media,
 		notifier: notifier,
 		sessions: sessions,
+		authz:    authz,
 		audit:    recorder,
 		log:      log,
 	}
@@ -202,6 +213,13 @@ func (s *Service) Accept(ctx context.Context, callID string) (AcceptResult, *htt
 	}
 	if !ok {
 		return AcceptResult{}, httpx.NewError(httpx.CodeCallNotFound, "Call not found or expired")
+	}
+
+	// RBAC: жилец может принять звонок только своей квартиры (auth.md §1). НЕ
+	// подменяет M1-гейт (accept→open) — это независимая доменная проверка.
+	if err := s.authz.AllowApartment(ctx, sess.ApartmentID); err != nil {
+		s.log.Warn("accept_forbidden", "call_id", callID, "apartment_id", sess.ApartmentID)
+		return AcceptResult{}, httpx.NewError(httpx.CodeForbidden, "You are not a member of this apartment")
 	}
 
 	token, err := s.media.ResidentToken(callID, "resident:"+sess.ApartmentID)

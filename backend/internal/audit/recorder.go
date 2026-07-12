@@ -101,9 +101,11 @@ func (r *PgRecorder) Record(ctx context.Context, ev Event) error {
 	return nil
 }
 
-// List возвращает последние события (новые первыми). limit нормализуется в
-// [1, maxLimit], 0/отрицательное → defaultLimit.
-func (r *PgRecorder) List(ctx context.Context, limit int) ([]Row, error) {
+// List возвращает последние события УК mcID (новые первыми, скоуп admin по
+// management_company_id из claims — auth.md §5). limit нормализуется в
+// [1, maxLimit], 0/отрицательное → defaultLimit. Сравнение mcID через ::text —
+// пустой mcID даёт пустой результат без ошибки каста uuid.
+func (r *PgRecorder) List(ctx context.Context, mcID string, limit int) ([]Row, error) {
 	if limit <= 0 {
 		limit = defaultLimit
 	}
@@ -115,8 +117,9 @@ func (r *PgRecorder) List(ctx context.Context, limit int) ([]Row, error) {
 		SELECT id, event_type, occurred_at, actor, apartment_id, access_point_id,
 		       device_id, call_id, request_id, management_company_id, metadata
 		FROM audit_events
+		WHERE management_company_id::text = $1
 		ORDER BY id DESC
-		LIMIT $1`, limit)
+		LIMIT $2`, mcID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("audit: query: %w", err)
 	}

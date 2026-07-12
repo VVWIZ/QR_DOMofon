@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -9,14 +10,20 @@ import (
 	"domofon/backend/internal/platform/httpx"
 )
 
-// Handler обслуживает GET /api/v1/audit/events?limit=N.
+// MCResolver извлекает management_company_id текущего запроса из claims. Передаётся
+// адаптером cmd/server (auth.MCIDFromContext) — прямой импорт auth сюда создал бы
+// цикл (auth → audit.Recorder), поэтому связь инвертирована через функцию.
+type MCResolver func(ctx context.Context) string
+
+// Handler обслуживает GET /api/v1/audit/events?limit=N (скоуп по mc_id из claims).
 type Handler struct {
 	recorder *PgRecorder
+	mcID     MCResolver
 }
 
-// NewHandler создаёт HTTP-хендлер аудита.
-func NewHandler(recorder *PgRecorder) *Handler {
-	return &Handler{recorder: recorder}
+// NewHandler создаёт HTTP-хендлер аудита с резолвером mc_id (скоуп admin).
+func NewHandler(recorder *PgRecorder, mcID MCResolver) *Handler {
+	return &Handler{recorder: recorder, mcID: mcID}
 }
 
 // eventJSON — форма события в ответе (api.md GET /audit/events). Nullable-поля —
@@ -46,7 +53,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := h.recorder.List(r.Context(), limit)
+	rows, err := h.recorder.List(r.Context(), h.mcID(r.Context()), limit)
 	if err != nil {
 		log.Error("audit_list_failed", "error", err)
 		httpx.WriteError(w, httpx.CodeInternal, "Failed to read audit events", httpx.RequestIDFromContext(r.Context()))

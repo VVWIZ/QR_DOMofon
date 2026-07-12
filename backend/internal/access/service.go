@@ -42,6 +42,13 @@ type PresenceChecker interface {
 	IsOnline(ctx context.Context, deviceID string) (bool, error)
 }
 
+// Authorizer сверяет привязку текущего пользователя (claims из ctx) к квартире
+// сессии. Nil-ошибка = доступ разрешён; иначе → 403 FORBIDDEN. Реализация —
+// адаптер в cmd/server поверх auth.ClaimsFromContext + auth.AllowApartment.
+type Authorizer interface {
+	AllowApartment(ctx context.Context, apartmentID string) error
+}
+
 // OpenRelayCommand — команда открытия реле (собирается access, публикуется
 // адаптером devices.Commander).
 type OpenRelayCommand struct {
@@ -75,6 +82,7 @@ type Service struct {
 	presence  PresenceChecker
 	publisher CommandPublisher
 	cmdCtx    CommandContextStore
+	authz     Authorizer
 	audit     audit.Recorder
 	log       *slog.Logger
 }
@@ -85,6 +93,7 @@ func NewService(
 	presence PresenceChecker,
 	publisher CommandPublisher,
 	cmdCtx CommandContextStore,
+	authz Authorizer,
 	recorder audit.Recorder,
 	log *slog.Logger,
 ) *Service {
@@ -93,6 +102,7 @@ func NewService(
 		presence:  presence,
 		publisher: publisher,
 		cmdCtx:    cmdCtx,
+		authz:     authz,
 		audit:     recorder,
 		log:       log,
 	}
@@ -108,6 +118,13 @@ func (s *Service) Open(ctx context.Context, callID string) (OpenResult, *httpx.E
 	}
 	if !ok {
 		return OpenResult{}, httpx.NewError(httpx.CodeCallNotFound, "Call not found or expired")
+	}
+
+	// RBAC: открыть дверь может только жилец своей квартиры (auth.md §1).
+	// Проверяем до presence/publish и независимо от M1-гейта ниже.
+	if err := s.authz.AllowApartment(ctx, sess.ApartmentID); err != nil {
+		s.log.Warn("open_forbidden", "call_id", callID, "apartment_id", sess.ApartmentID)
+		return OpenResult{}, httpx.NewError(httpx.CodeForbidden, "You are not a member of this apartment")
 	}
 
 	// M1: дверь открывается только после того, как жилец принял звонок.

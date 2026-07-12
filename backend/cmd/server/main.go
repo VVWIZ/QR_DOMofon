@@ -20,6 +20,7 @@ import (
 
 	"domofon/backend/internal/access"
 	"domofon/backend/internal/audit"
+	"domofon/backend/internal/auth"
 	"domofon/backend/internal/calls"
 	"domofon/backend/internal/devices"
 	"domofon/backend/internal/platform/config"
@@ -94,8 +95,29 @@ func main() {
 	cmdCtxStore := devices.NewCommandContextStore(rdb)
 	recorder := audit.NewRecorder(pool, log)
 
+	// --- Auth / RBAC (auth.md) ---
+	// Ключи RS256: env-PEM, dev-fallback при AuthDevMode, иначе fail-closed.
+	jwtPriv, jwtPub, err := auth.LoadKeys(cfg.JWTPrivateKey, cfg.JWTPublicKey, cfg.AuthDevMode)
+	if err != nil {
+		log.Error("auth_keys_load_failed", "error", err)
+		os.Exit(1)
+	}
+	if cfg.AuthDevMode {
+		log.Warn("auth_dev_mode_enabled", "hint", "фиксированный dev-keypair — НЕ ДЛЯ ПРОД")
+	}
+	authVerifier := auth.NewRSAVerifier(jwtPub)
+	authn := auth.Authenticator(authVerifier)
+	authRepo := auth.NewRepo(pool)
+	otpService := auth.NewOtpService(auth.NewRedisOtpStore(rdb), auth.NewDevSender(log), log)
+	refreshWL := auth.NewRefreshWhitelist(auth.NewRedisRefreshKV(rdb))
+	authSvc := auth.NewService(authRepo, otpService, refreshWL, jwtPriv, jwtPub, recorder, cfg.AuthDevMode, log)
+	authHandler := auth.NewHandler(authSvc)
+	// Адаптер авторизации по квартире (claims из ctx → 403 при отказе).
+	authorizer := apartmentAuthorizer{}
+
 	sessions := calls.NewStore(rdb)
-	sseHub := calls.NewSSEHub(log)
+	// SSE per-apartment: подписчик получает потоки квартир своих ролей (claims).
+	sseHub := calls.NewSSEHub(log, auth.ApartmentsFromContext)
 
 	statusConsumer := devices.NewStatusConsumer(presence, deviceRepo, recorder, cmdCtxStore, log)
 	if err := mqttClient.Subscribe("devices/+/status", statusConsumer.Handle); err != nil {
@@ -110,6 +132,7 @@ func main() {
 		livekit,
 		sseHub,
 		sessions,
+		authorizer,
 		recorder,
 		log,
 	)
@@ -119,6 +142,7 @@ func main() {
 		presence,
 		commandPublisherAdapter{commander: commander},
 		cmdCtxStore,
+		authorizer,
 		recorder,
 		log,
 	)
@@ -128,7 +152,7 @@ func main() {
 	callsHandler := calls.NewHandler(callSvc)
 	accessHandler := access.NewHandler(accessSvc)
 	devicesHandler := devices.NewHandler(deviceRepo, presence)
-	auditHandler := audit.NewHandler(recorder)
+	auditHandler := audit.NewHandler(recorder, auth.MCIDFromContext)
 
 	// --- Роутер ---
 	r := httpx.NewRouter(log)
@@ -146,16 +170,43 @@ func main() {
 	// Rate-limit на публичных (неаутентифицированных) POST — защита от абуза
 	// (prod-гэп §5.6). 30 запросов/мин на IP: щедро для демо, режет флуд.
 	publicRL := httpx.RateLimit(30, time.Minute)
+	// Строгий лимитер для чувствительных auth-эндпоинтов (per-IP): OTP-запрос и
+	// вход админа. OTP-per-phone лимит — уже в auth.OtpService.
+	authRL := httpx.RateLimit(10, time.Minute)
 	r.Route("/api/v1", func(r chi.Router) {
+		// --- Публичные (без токена) под publicRL ---
 		r.With(publicRL).Post("/qr/validate", qrHandler.Validate)
 		r.With(publicRL).Post("/calls/initiate", callsHandler.Initiate)
-		r.Post("/calls/{id}/accept", callsHandler.Accept)
-		r.Post("/calls/{id}/cancel", callsHandler.Cancel)
-		r.Post("/calls/{id}/end", callsHandler.End)
-		r.Get("/resident/events", sseHub.Handler())
-		r.With(publicRL).Post("/access/open", accessHandler.Open)
-		r.Get("/devices", devicesHandler.List)
-		r.Get("/audit/events", auditHandler.List)
+		// cancel/end авторизуются обладанием call_id (capability), остаются публичными.
+		r.With(publicRL).Post("/calls/{id}/cancel", callsHandler.Cancel)
+		r.With(publicRL).Post("/calls/{id}/end", callsHandler.End)
+
+		// --- Auth-эндпоинты (публичные, но со своими лимитерами; /me — под authn) ---
+		r.Route("/auth", func(r chi.Router) {
+			r.With(authRL).Post("/otp/send", authHandler.OtpSend)
+			r.With(authRL).Post("/otp/verify", authHandler.OtpVerify)
+			r.With(authRL).Post("/admin/login", authHandler.AdminLogin)
+			r.With(publicRL).Post("/refresh", authHandler.Refresh)
+			r.With(publicRL).Post("/logout", authHandler.Logout)
+			r.With(authn).Get("/me", authHandler.Me)
+		})
+
+		// --- Resident-only (authn + RequireResident + доменная apartment-проверка) ---
+		r.Group(func(r chi.Router) {
+			r.Use(authn)
+			r.Use(auth.RequireResident)
+			r.Post("/calls/{id}/accept", callsHandler.Accept)
+			r.Post("/access/open", accessHandler.Open)
+			r.Get("/resident/events", sseHub.Handler())
+		})
+
+		// --- Admin-only (authn + RequireAdmin, скоуп выборок по mc_id из claims) ---
+		r.Group(func(r chi.Router) {
+			r.Use(authn)
+			r.Use(auth.RequireAdmin)
+			r.Get("/devices", devicesHandler.List)
+			r.Get("/audit/events", auditHandler.List)
+		})
 	})
 
 	// --- HTTP-сервер + graceful shutdown ---
@@ -192,6 +243,18 @@ func main() {
 }
 
 // --- Адаптеры границ модулей (architecture.md §1) ---
+
+// apartmentAuthorizer реализует calls.Authorizer и access.Authorizer поверх
+// claims из контекста (auth.md §1, §5): доступ разрешён, если пользователь
+// привязан к квартире apartmentID; иначе — ошибка (сервис отдаёт 403 FORBIDDEN).
+type apartmentAuthorizer struct{}
+
+func (apartmentAuthorizer) AllowApartment(ctx context.Context, apartmentID string) error {
+	if auth.AllowApartmentFromContext(ctx, apartmentID) {
+		return nil
+	}
+	return errors.New("apartment access denied")
+}
 
 // qrVerifierAdapter связывает calls.QRVerifier с qr.Verify + keyring.
 type qrVerifierAdapter struct{ keyring qr.Keyring }
