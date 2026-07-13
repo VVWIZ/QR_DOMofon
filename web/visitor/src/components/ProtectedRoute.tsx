@@ -4,17 +4,20 @@ import { useAuth } from '../auth/AuthContext';
 
 /**
  * Гейт защищённых роутов. Пока идёт bootstrap — лоадер; аноним → /login;
- * requireResident=true и роль не resident/owner → тоже /login (админ не имеет
- * UI жильца в этом инкременте).
+ * requireResident=true и роль не resident/owner → /login; requireAdmin=true и
+ * роль не mc_admin → /login. Резидентский UI жильца/владельца — в мобильном
+ * приложении (вне веба); здесь на вебе — только УК-консоль (admin).
  */
 export function ProtectedRoute({
   children,
   requireResident = false,
+  requireAdmin = false,
 }: {
   children: ReactNode;
   requireResident?: boolean;
+  requireAdmin?: boolean;
 }) {
-  const { status, isResident } = useAuth();
+  const { status, isResident, isAdmin } = useAuth();
 
   if (status === 'loading') {
     return (
@@ -23,7 +26,11 @@ export function ProtectedRoute({
       </div>
     );
   }
-  if (status === 'anon' || (requireResident && !isResident)) {
+  if (
+    status === 'anon' ||
+    (requireResident && !isResident) ||
+    (requireAdmin && !isAdmin)
+  ) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

@@ -31,7 +31,6 @@ export function LoginPage() {
   const [email, setEmail] = useState('admin@demo.example');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
-  const [adminDone, setAdminDone] = useState(false);
 
   const sendCode = async () => {
     setBusy(true);
@@ -65,7 +64,7 @@ export function LoginPage() {
     setErr(null);
     try {
       await adminLogin(email.trim(), password, totp.trim());
-      setAdminDone(true);
+      nav('/admin', { replace: true });
     } catch (e) {
       setErr(mapErr(e));
     } finally {
@@ -151,14 +150,6 @@ export function LoginPage() {
                 </button>
               </>
             )}
-          </div>
-        ) : adminDone ? (
-          <div className="form">
-            <p className="ok-text">Вход выполнен.</p>
-            <p className="muted">
-              Админ-API (устройства, аудит) доступен по токену. UI админки УК — вне скоупа этого
-              инкремента.
-            </p>
           </div>
         ) : (
           <div className="form">

@@ -16,6 +16,7 @@ interface AuthCtx {
   status: Status;
   user: AuthUser | null;
   isResident: boolean;
+  isAdmin: boolean;
   otpSend: (phone: string) => Promise<OtpSendResponse>;
   otpVerify: (phone: string, code: string) => Promise<void>;
   adminLogin: (email: string, password: string, totp: string) => Promise<void>;
@@ -90,9 +91,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isResident = user?.kind === 'resident' || user?.kind === 'owner';
+  const isAdmin = user?.kind === 'mc_admin';
 
   return (
-    <Ctx.Provider value={{ status, user, isResident, otpSend, otpVerify, adminLogin, logout }}>
+    <Ctx.Provider
+      value={{ status, user, isResident, isAdmin, otpSend, otpVerify, adminLogin, logout }}
+    >
       {children}
     </Ctx.Provider>
   );

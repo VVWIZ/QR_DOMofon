@@ -20,6 +20,8 @@ export type ApiErrorCode =
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
   | 'RATE_LIMIT'
+  | 'INVITE_INVALID'
+  | 'INVITE_EXPIRED'
   | 'INTERNAL';
 
 // --- Auth (auth.md, api.md «Аутентификация») ---
@@ -124,6 +126,56 @@ export interface Device {
 /** Ответ GET /api/v1/devices (200) — обёрнут в объект. */
 export interface DevicesResponse {
   devices: Device[];
+}
+
+// --- Онбординг: УК-консоль (api.md, эндпоинты /admin/*) ---
+
+/** Выданный инвайт (мок доставки: секрет-ссылка в ответе). */
+export interface InviteInfo {
+  token: string;
+  url: string;
+  expires_at: string;
+}
+
+/** Ответ POST /api/v1/admin/owners (201). */
+export interface CreateOwnerResponse {
+  invite: InviteInfo;
+}
+
+/**
+ * Ответ POST /api/v1/admin/access-grants: грант выдан сразу (200,
+ * granted=true) либо выпущен инвайт для активации (201, granted=false).
+ */
+export interface CreateGrantResponse {
+  granted: boolean;
+  user_id?: string;
+  access_point_public_id?: string;
+  invite?: InviteInfo;
+}
+
+export interface ResidentApartmentInfo {
+  id: string;
+  number: string;
+  role: string;
+}
+
+export interface ResidentGrantInfo {
+  public_id: string;
+  label: string;
+}
+
+/** Жилец/владелец в выборке УК (GET /api/v1/admin/residents). */
+export interface ResidentInfo {
+  user_id: string;
+  phone: string;
+  kind: UserKind;
+  apartments: ResidentApartmentInfo[];
+  grants: ResidentGrantInfo[];
+}
+
+/** Ответ GET /api/v1/admin/residents (200). */
+export interface ResidentsResponse {
+  residents: ResidentInfo[];
 }
 
 // --- SSE-события GET /api/v1/resident/events ---

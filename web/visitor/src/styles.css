@@ -392,3 +392,43 @@ h2 {
 .small { font-size: 0.85em; }
 .ok-text { color: #63d68a; font-weight: 600; }
 .err-text { color: #ff7a7a; margin-top: 12px; }
+
+/* --- УК-консоль (AdminPage) --- */
+.page.admin { align-items: stretch; max-width: 900px; margin: 0 auto; width: 100%; }
+.admin-header { width: 100%; margin-bottom: 18px; }
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.admin-card { max-width: none; }
+.admin-card.wide { grid-column: 1 / -1; }
+.admin-card h2 { font-size: 1.15rem; }
+@media (max-width: 720px) {
+  .admin-grid { grid-template-columns: 1fr; }
+}
+
+.invite-block { margin-top: 14px; }
+.invite-url { display: block; padding: 8px; border-radius: 6px; }
+.invite-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+
+.res-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.res-row {
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  background: var(--card-2);
+}
+.res-main { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.res-phone { font-weight: 600; }
+.res-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag {
+  font-size: 0.72rem; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.tag-owner { color: var(--warning-text); border-color: var(--warning-line); }
+.tag-resident { color: #8fd0ff; border-color: #2f6ea5; }
+.tag-mc_admin { color: #d0a0ff; border-color: #6a4a9a; }
+.chip {
+  font-size: 0.78rem; padding: 3px 9px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line);
+}
+.chip-grant { color: #63d68a; border-color: var(--success-2); }

@@ -2,6 +2,7 @@ import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import { VisitorPage } from './pages/VisitorPage';
 import { ResidentPage } from './pages/ResidentPage';
 import { LoginPage } from './pages/LoginPage';
+import { AdminPage } from './pages/AdminPage';
 import { AuthProvider } from './auth/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
@@ -13,10 +14,13 @@ function Home() {
         <p className="muted">Демонстрационный walking skeleton.</p>
         <ul className="links">
           <li>
-            <Link to="/resident">Экран жильца — /resident</Link>
+            <Link to="/login">Вход (жилец / администратор) — /login</Link>
           </li>
           <li>
-            <Link to="/login">Вход (жилец / администратор) — /login</Link>
+            <Link to="/admin">УК-консоль — /admin</Link>
+          </li>
+          <li>
+            <Link to="/resident">Экран жильца (демо-стенд-ин) — /resident</Link>
           </li>
         </ul>
         <p className="hint">
@@ -39,6 +43,14 @@ export function App() {
           element={
             <ProtectedRoute requireResident>
               <ResidentPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute requireAdmin>
+              <AdminPage />
             </ProtectedRoute>
           }
         />

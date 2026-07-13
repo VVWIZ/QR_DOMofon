@@ -2,6 +2,8 @@ import type {
   AcceptResponse,
   ApiErrorEnvelope,
   AuthUser,
+  CreateGrantResponse,
+  CreateOwnerResponse,
   DevicesResponse,
   InitiateResponse,
   LoginResponse,
@@ -9,6 +11,7 @@ import type {
   OtpSendResponse,
   QrParams,
   RefreshResponse,
+  ResidentsResponse,
   ValidateResponse,
 } from './types';
 import {
@@ -183,6 +186,21 @@ export const api = {
     request<void>('/auth/logout', { method: 'POST' }, { skipAuth: true }),
 
   authMe: () => request<AuthUser>('/auth/me'),
+
+  // --- Онбординг: УК-консоль (admin, Bearer добавляется автоматически) ---
+  adminCreateOwner: (apartment_id: string, phone: string) =>
+    request<CreateOwnerResponse>('/admin/owners', {
+      method: 'POST',
+      body: JSON.stringify({ apartment_id, phone }),
+    }),
+
+  adminCreateGrant: (access_point_public_id: string, phone: string) =>
+    request<CreateGrantResponse>('/admin/access-grants', {
+      method: 'POST',
+      body: JSON.stringify({ access_point_public_id, phone }),
+    }),
+
+  adminListResidents: () => request<ResidentsResponse>('/admin/residents'),
 };
 
 /** Человекочитаемое сообщение из любой ошибки. */
