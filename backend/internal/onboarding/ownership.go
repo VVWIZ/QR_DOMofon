@@ -8,5 +8,10 @@ import "domofon/backend/internal/auth"
 // (resident) той же квартиры, владелец другой квартиры и mc_admin (roles пуст) —
 // не вправе.
 func CanInviteToApartment(claims auth.Claims, apartmentID string) bool {
-	panic("not implemented: onboarding.CanInviteToApartment")
+	for _, r := range claims.Roles {
+		if r.ApartmentID == apartmentID && r.Role == "owner" {
+			return true
+		}
+	}
+	return false
 }

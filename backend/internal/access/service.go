@@ -223,5 +223,62 @@ func (s *Service) Open(ctx context.Context, callID string) (OpenResult, *httpx.E
 // DEVICE_OFFLINE, publish не вызывается), публикация open_relay, best-effort
 // cmdCtx.Save и аудит door_open_requested. Возвращает request_id и status="sent".
 func (s *Service) OpenPoint(ctx context.Context, userID, publicID string) (OpenResult, *httpx.Error) {
-	panic("not implemented: access.OpenPoint")
+	gp, ok, err := s.resolver.ResolveGrantedPoint(ctx, userID, publicID)
+	if err != nil {
+		s.log.Error("resolve_granted_point_failed", "error", err, "user_id", userID, "public_id", publicID)
+		return OpenResult{}, httpx.NewError(httpx.CodeInternal, "Internal server error")
+	}
+	if !ok {
+		s.log.Warn("open_point_forbidden", "user_id", userID, "public_id", publicID)
+		return OpenResult{}, httpx.NewError(httpx.CodeForbidden, "You do not have access to this point")
+	}
+
+	online, err := s.presence.IsOnline(ctx, gp.DeviceID)
+	if err != nil {
+		s.log.Error("presence_check_failed", "error", err, "device_id", gp.DeviceID)
+		return OpenResult{}, httpx.NewError(httpx.CodeInternal, "Internal server error")
+	}
+	if !online {
+		return OpenResult{}, httpx.NewError(httpx.CodeDeviceOffline, "Device is offline, door cannot be opened remotely")
+	}
+
+	requestID := uuid.NewString()
+	issuedBy := "resident:" + userID
+	issuedAt := time.Now().UTC().Format(time.RFC3339)
+
+	cmd := OpenRelayCommand{
+		RelayID:    relayID,
+		DurationMs: durationMs,
+		RequestID:  requestID,
+		IssuedBy:   issuedBy,
+		IssuedAt:   issuedAt,
+	}
+	if err := s.publisher.PublishOpenRelay(ctx, gp.DeviceID, cmd); err != nil {
+		s.log.Error("publish_open_relay_failed", "error", err, "device_id", gp.DeviceID, "request_id", requestID)
+		return OpenResult{}, httpx.NewError(httpx.CodeInternal, "Failed to send command")
+	}
+
+	// Контекст команды для корреляции command_ack (best-effort).
+	if err := s.cmdCtx.Save(ctx, requestID, map[string]string{
+		"apartment_id":          gp.ApartmentID,
+		"access_point_id":       gp.AccessPointID,
+		"device_id":             gp.DeviceID,
+		"management_company_id": gp.ManagementCompanyID,
+	}); err != nil {
+		s.log.Warn("cmd_context_save_failed", "error", err, "request_id", requestID)
+	}
+
+	if err := s.audit.Record(ctx, audit.Event{
+		EventType:           "door_open_requested",
+		Actor:               issuedBy,
+		AccessPointID:       gp.AccessPointID,
+		DeviceID:            gp.DeviceID,
+		RequestID:           requestID,
+		ManagementCompanyID: gp.ManagementCompanyID,
+		Metadata:            map[string]any{"relay_id": relayID, "duration_ms": durationMs},
+	}); err != nil {
+		s.log.Error("audit_record_failed", "error", err, "event_type", "door_open_requested")
+	}
+
+	return OpenResult{RequestID: requestID, Status: "sent"}, nil
 }

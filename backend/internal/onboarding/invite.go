@@ -25,5 +25,11 @@ type Invite struct {
 // Порядок: сначала used, затем expiry (использованная ссылка невалидна вне
 // зависимости от срока). now инъектируется для детерминизма.
 func (i Invite) Validate(now time.Time) *httpx.Error {
-	panic("not implemented: onboarding.Invite.Validate")
+	if i.UsedAt != nil {
+		return httpx.NewError(httpx.CodeInviteInvalid, "Invite has already been used")
+	}
+	if now.After(i.ExpiresAt) {
+		return httpx.NewError(httpx.CodeInviteExpired, "Invite has expired")
+	}
+	return nil
 }
