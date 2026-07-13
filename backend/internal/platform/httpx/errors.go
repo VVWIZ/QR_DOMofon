@@ -27,6 +27,12 @@ const (
 	CodeUnauthorized    Code = "UNAUTHORIZED"
 	CodeForbidden       Code = "FORBIDDEN"
 	CodeInternal        Code = "INTERNAL"
+
+	// Инкремент онбординга (онбординг + гранты). Инвайт-токен по одноразовой
+	// ссылке: не найден/уже использован → INVITE_INVALID (404), просрочен →
+	// INVITE_EXPIRED (410 Gone — ресурс существовал, но истёк).
+	CodeInviteInvalid Code = "INVITE_INVALID"
+	CodeInviteExpired Code = "INVITE_EXPIRED"
 )
 
 // ErrorResponse — единый конверт ошибки (сериализуется в тело ответа).
@@ -44,7 +50,8 @@ type ErrorBody struct {
 // HTTPStatus возвращает HTTP-статус для доменного кода:
 //
 //	INVALID_QR, VALIDATION_ERROR      → 400
-//	CALL_NOT_FOUND                    → 404
+//	CALL_NOT_FOUND, INVITE_INVALID    → 404
+//	INVITE_EXPIRED                    → 410
 //	CALL_NOT_ACCEPTED, CALL_IN_PROGRESS → 409
 //	UNAUTHORIZED                      → 401
 //	FORBIDDEN                         → 403
@@ -61,8 +68,10 @@ func HTTPStatus(code Code) int {
 		return http.StatusUnauthorized
 	case CodeForbidden:
 		return http.StatusForbidden
-	case CodeCallNotFound:
+	case CodeCallNotFound, CodeInviteInvalid:
 		return http.StatusNotFound
+	case CodeInviteExpired:
+		return http.StatusGone
 	case CodeCallNotAccepted, CodeCallInProgress:
 		return http.StatusConflict
 	case CodeRateLimit:

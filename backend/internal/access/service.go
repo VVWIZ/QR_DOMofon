@@ -76,6 +76,23 @@ type OpenResult struct {
 	Status    string
 }
 
+// GrantedPoint — точка доступа, на которую у пользователя есть постоянный грант
+// (онбординг + гранты). Возвращается PointResolver по (userID, publicID) и несёт
+// минимум для публикации команды и аудита открытия по гранту.
+type GrantedPoint struct {
+	DeviceID            string
+	AccessPointID       string
+	ApartmentID         string
+	ManagementCompanyID string
+}
+
+// PointResolver ищет активный грант пользователя на точку по её публичному id.
+// ok=false → у пользователя нет гранта на эту точку (→ 403 FORBIDDEN). Реализация
+// (pgx-репозиторий грантов) внедряется адаптером в cmd/server.
+type PointResolver interface {
+	ResolveGrantedPoint(ctx context.Context, userID, publicID string) (GrantedPoint, bool, error)
+}
+
 // Service — доменная логика открытия двери.
 type Service struct {
 	calls     CallStore
@@ -85,6 +102,19 @@ type Service struct {
 	authz     Authorizer
 	audit     audit.Recorder
 	log       *slog.Logger
+
+	// resolver — опциональная зависимость OpenPoint (открытие по гранту).
+	// Устанавливается сеттером SetPointResolver, чтобы не менять сигнатуру
+	// NewService и существующий wiring в cmd/server (финальный wiring — этап
+	// backend).
+	resolver PointResolver
+}
+
+// SetPointResolver внедряет резолвер грантов для OpenPoint. Отдельный сеттер
+// (а не параметр NewService) — чтобы существующий вызов NewService и путь Open
+// не менялись.
+func (s *Service) SetPointResolver(r PointResolver) {
+	s.resolver = r
 }
 
 // NewService собирает сервис доступа.
@@ -185,4 +215,13 @@ func (s *Service) Open(ctx context.Context, callID string) (OpenResult, *httpx.E
 	}
 
 	return OpenResult{RequestID: requestID, Status: "sent"}, nil
+}
+
+// OpenPoint открывает точку по постоянному гранту пользователя (онбординг +
+// гранты), БЕЗ call-сессии и M1-гейта: наличие гранта само по себе даёт право.
+// Шаги: резолв гранта (нет → 403 FORBIDDEN), presence устройства (offline → 503
+// DEVICE_OFFLINE, publish не вызывается), публикация open_relay, best-effort
+// cmdCtx.Save и аудит door_open_requested. Возвращает request_id и status="sent".
+func (s *Service) OpenPoint(ctx context.Context, userID, publicID string) (OpenResult, *httpx.Error) {
+	panic("not implemented: access.OpenPoint")
 }

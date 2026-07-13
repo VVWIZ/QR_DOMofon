@@ -38,6 +38,20 @@ func TestHTTPStatus_AuthCodes(t *testing.T) {
 	}
 }
 
+func TestHTTPStatus_InviteCodes(t *testing.T) {
+	// Инкремент онбординга: INVITE_INVALID→404 (не найден/использован),
+	// INVITE_EXPIRED→410 Gone (ссылка истекла).
+	cases := map[Code]int{
+		CodeInviteInvalid: http.StatusNotFound, // 404
+		CodeInviteExpired: http.StatusGone,     // 410
+	}
+	for code, want := range cases {
+		if got := HTTPStatus(code); got != want {
+			t.Errorf("HTTPStatus(%q) = %d, want %d", code, got, want)
+		}
+	}
+}
+
 func TestHTTPStatus_UnknownCodeDefaults500(t *testing.T) {
 	if got := HTTPStatus(Code("SOMETHING_ELSE")); got != http.StatusInternalServerError {
 		t.Fatalf("HTTPStatus(неизвестный код) = %d, want 500", got)
