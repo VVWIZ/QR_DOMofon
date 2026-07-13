@@ -64,6 +64,25 @@ func (r *Repo) GetUserByPhone(ctx context.Context, phone string) (User, error) {
 	return u, nil
 }
 
+// GetUserByID возвращает пользователя по id: id, phone, email, kind, mc_id (для
+// выдачи токенов при приёме инвайта — вход без OTP). Не найден → ErrUserNotFound.
+func (r *Repo) GetUserByID(ctx context.Context, id string) (User, error) {
+	const q = `
+		SELECT id, COALESCE(phone, ''), COALESCE(email, ''), kind,
+		       COALESCE(management_company_id::text, '')
+		FROM users
+		WHERE id = $1`
+	var u User
+	err := r.pool.QueryRow(ctx, q, id).Scan(&u.ID, &u.Phone, &u.Email, &u.Kind, &u.MCID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("auth: get user by id: %w", err)
+	}
+	return u, nil
+}
+
 // GetAdminByEmail возвращает УК-админа по email (для admin-логина): id, email,
 // bcrypt-хеш пароля, TOTP-секрет, mc_id, kind. Не найден → ErrUserNotFound.
 func (r *Repo) GetAdminByEmail(ctx context.Context, email string) (User, error) {

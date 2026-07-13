@@ -23,6 +23,7 @@ import (
 	"domofon/backend/internal/auth"
 	"domofon/backend/internal/calls"
 	"domofon/backend/internal/devices"
+	"domofon/backend/internal/onboarding"
 	"domofon/backend/internal/platform/config"
 	"domofon/backend/internal/platform/httpx"
 	"domofon/backend/internal/platform/logging"
@@ -147,10 +148,19 @@ func main() {
 		log,
 	)
 
+	// --- Онбординг + гранты (онбординг) ---
+	// Репозиторий грантов реализует резолвер/листер access (прямое открытие
+	// калиток/шлагбаумов по постоянному гранту) — внедряется сеттерами.
+	onboardingRepo := onboarding.NewRepo(pool)
+	onboardingSvc := onboarding.NewService(onboardingRepo, authSvc, cfg.VisitorBaseURL)
+	onboardingHandler := onboarding.NewHandler(onboardingSvc)
+	accessSvc.SetPointResolver(onboardingRepo)
+	accessSvc.SetPointLister(onboardingRepo)
+
 	// --- Хендлеры ---
 	qrHandler := qr.NewHandler(qrKeyring, qrPropertyAdapter{svc: propertySvc}, presence)
 	callsHandler := calls.NewHandler(callSvc)
-	accessHandler := access.NewHandler(accessSvc)
+	accessHandler := access.NewHandler(accessSvc, auth.SubjectFromContext)
 	devicesHandler := devices.NewHandler(deviceRepo, presence)
 	auditHandler := audit.NewHandler(recorder, auth.MCIDFromContext)
 
@@ -188,6 +198,8 @@ func main() {
 			r.With(authRL).Post("/admin/login", authHandler.AdminLogin)
 			r.With(publicRL).Post("/refresh", authHandler.Refresh)
 			r.With(publicRL).Post("/logout", authHandler.Logout)
+			// Приём инвайта — публичный (вход без OTP по секрет-ссылке), под authRL.
+			r.With(authRL).Post("/invite/accept", onboardingHandler.AcceptInvite)
 			r.With(authn).Get("/me", authHandler.Me)
 		})
 
@@ -198,6 +210,11 @@ func main() {
 			r.Post("/calls/{id}/accept", callsHandler.Accept)
 			r.Post("/access/open", accessHandler.Open)
 			r.Get("/resident/events", sseHub.Handler())
+			// Прямое открытие калиток/шлагбаумов по гранту (без звонка).
+			r.Get("/access/points", accessHandler.ListPoints)
+			r.Post("/access/open-point", accessHandler.OpenPoint)
+			// Владелец приглашает жильца в свою квартиру (проверка ownership — в сервисе).
+			r.Post("/apartments/{apartment_id}/residents/invite", onboardingHandler.InviteResident)
 		})
 
 		// --- Admin-only (authn + RequireAdmin, скоуп выборок по mc_id из claims) ---
@@ -206,6 +223,10 @@ func main() {
 			r.Use(auth.RequireAdmin)
 			r.Get("/devices", devicesHandler.List)
 			r.Get("/audit/events", auditHandler.List)
+			// Онбординг: УК создаёт владельцев, раздаёт гранты, видит жильцов.
+			r.Post("/admin/owners", onboardingHandler.CreateOwner)
+			r.Post("/admin/access-grants", onboardingHandler.CreateAccessGrant)
+			r.Get("/admin/residents", onboardingHandler.ListResidents)
 		})
 	})
 

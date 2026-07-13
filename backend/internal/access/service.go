@@ -93,6 +93,30 @@ type PointResolver interface {
 	ResolveGrantedPoint(ctx context.Context, userID, publicID string) (GrantedPoint, bool, error)
 }
 
+// GrantedPointInfo — точка, на которую у пользователя есть грант, для листинга
+// (/access/points): публичный id, метка, тип и устройство (для presence).
+type GrantedPointInfo struct {
+	PublicID string
+	Label    string
+	Type     string
+	DeviceID string
+}
+
+// PointLister возвращает все точки с грантом пользователя (для /access/points).
+// Реализация (pgx-репозиторий грантов) внедряется сеттером SetPointLister.
+type PointLister interface {
+	ListGrantedPoints(ctx context.Context, userID string) ([]GrantedPointInfo, error)
+}
+
+// PointStatus — точка с грантом + online-статус её устройства (ответ
+// /access/points).
+type PointStatus struct {
+	PublicID string
+	Label    string
+	Type     string
+	Online   bool
+}
+
 // Service — доменная логика открытия двери.
 type Service struct {
 	calls     CallStore
@@ -108,6 +132,10 @@ type Service struct {
 	// NewService и существующий wiring в cmd/server (финальный wiring — этап
 	// backend).
 	resolver PointResolver
+
+	// lister — опциональная зависимость ListPoints (листинг точек с грантом).
+	// Устанавливается сеттером SetPointLister по тем же причинам, что resolver.
+	lister PointLister
 }
 
 // SetPointResolver внедряет резолвер грантов для OpenPoint. Отдельный сеттер
@@ -115,6 +143,32 @@ type Service struct {
 // не менялись.
 func (s *Service) SetPointResolver(r PointResolver) {
 	s.resolver = r
+}
+
+// SetPointLister внедряет листер грантов для ListPoints.
+func (s *Service) SetPointLister(l PointLister) {
+	s.lister = l
+}
+
+// ListPoints возвращает точки, на которые у пользователя есть грант, с online-
+// статусом устройства каждой (для UI прямого открытия). Ошибка presence по
+// отдельной точке не валит выборку — точка помечается offline.
+func (s *Service) ListPoints(ctx context.Context, userID string) ([]PointStatus, *httpx.Error) {
+	pts, err := s.lister.ListGrantedPoints(ctx, userID)
+	if err != nil {
+		s.log.Error("list_granted_points_failed", "error", err, "user_id", userID)
+		return nil, httpx.NewError(httpx.CodeInternal, "Internal server error")
+	}
+	out := make([]PointStatus, 0, len(pts))
+	for _, p := range pts {
+		online, err := s.presence.IsOnline(ctx, p.DeviceID)
+		if err != nil {
+			s.log.Warn("presence_check_failed", "error", err, "device_id", p.DeviceID)
+			online = false
+		}
+		out = append(out, PointStatus{PublicID: p.PublicID, Label: p.Label, Type: p.Type, Online: online})
+	}
+	return out, nil
 }
 
 // NewService собирает сервис доступа.

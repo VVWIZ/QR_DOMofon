@@ -16,6 +16,17 @@ func MCIDFromContext(ctx context.Context) string {
 	return c.MCID
 }
 
+// SubjectFromContext возвращает id пользователя (claim sub) из claims текущего
+// запроса ("" если запрос не прошёл Authenticator). Инъектируется в access-хендлер
+// (открытие/листинг точек по гранту) без импорта auth в модуле access.
+func SubjectFromContext(ctx context.Context) string {
+	c, ok := ClaimsFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	return c.Subject
+}
+
 // ApartmentsFromContext возвращает apartment_id всех ролей пользователя из claims
 // (для подписки SSE на квартиры). Пусто, если Authenticator не отработал или
 // ролей нет (напр. mc_admin).

@@ -172,6 +172,14 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, userBody(h.svc.Me(claims)))
 }
 
+// WriteLogin ставит refresh-cookie и пишет тело логина (access-токен + профиль,
+// 200). Публичный хелпер для онбординга: приём инвайта = вход без OTP, тот же
+// контракт ответа, что otp/verify и admin/login.
+func WriteLogin(w http.ResponseWriter, res LoginResult) {
+	setRefreshCookie(w, res.RefreshToken)
+	httpx.WriteJSON(w, http.StatusOK, loginBody(res))
+}
+
 // --- Вспомогательное ---
 
 // decodeBody читает JSON-тело (лимит 64 KiB); при ошибке пишет VALIDATION_ERROR

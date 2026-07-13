@@ -118,6 +118,18 @@ func (s *Service) OtpVerify(ctx context.Context, phone, code string) (LoginResul
 	return s.issueLogin(ctx, user)
 }
 
+// IssueForUser выпускает пару токенов для существующего пользователя по его id —
+// вход без OTP/пароля (приём инвайта онбординга, осознанное упрощение bearer-
+// ссылки). Переиспользует issueLogin (роли → пара → whitelist → аудит user_login).
+// Неизвестный id → UNAUTHORIZED (детали не раскрываются).
+func (s *Service) IssueForUser(ctx context.Context, userID string) (LoginResult, *httpx.Error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return LoginResult{}, httpx.NewError(httpx.CodeUnauthorized, "user not found")
+	}
+	return s.issueLogin(ctx, user)
+}
+
 // AdminLogin — одношаговый вход УК-админа: bcrypt-пароль + TOTP. Любая неверная
 // часть → единый UNAUTHORIZED без указания какой (auth.md §5).
 func (s *Service) AdminLogin(ctx context.Context, email, password, totpCode string) (LoginResult, *httpx.Error) {

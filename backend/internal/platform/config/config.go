@@ -42,6 +42,10 @@ type Config struct {
 	JWTPrivateKey string
 	JWTPublicKey  string
 	AuthDevMode   bool
+
+	// VisitorBaseURL — база для сборки инвайт-ссылок онбординга (мок доставки:
+	// ссылка возвращается в ответе API). Dev — Vite-фронт на :5173.
+	VisitorBaseURL string
 }
 
 // Load загружает .env (если присутствует; отсутствие файла не ошибка) и
@@ -76,6 +80,8 @@ func Load() Config {
 		// (в .env.example задано; `cp .env.example .env`). Без ключей и без dev-режима
 		// сервер не стартует (fail-closed).
 		AuthDevMode: envBool("AUTH_DEV_MODE", false),
+
+		VisitorBaseURL: env("VISITOR_BASE_URL", "http://localhost:5173"),
 	}
 }
 
