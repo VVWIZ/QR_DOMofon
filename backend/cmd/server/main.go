@@ -152,7 +152,7 @@ func main() {
 	// Репозиторий грантов реализует резолвер/листер access (прямое открытие
 	// калиток/шлагбаумов по постоянному гранту) — внедряется сеттерами.
 	onboardingRepo := onboarding.NewRepo(pool)
-	onboardingSvc := onboarding.NewService(onboardingRepo, authSvc, cfg.VisitorBaseURL)
+	onboardingSvc := onboarding.NewService(onboardingRepo, authSvc, cfg.VisitorBaseURL, recorder, log)
 	onboardingHandler := onboarding.NewHandler(onboardingSvc)
 	accessSvc.SetPointResolver(onboardingRepo)
 	accessSvc.SetPointLister(onboardingRepo)

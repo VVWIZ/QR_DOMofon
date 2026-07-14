@@ -72,8 +72,12 @@ type residentJSON struct {
 	Grants     []grantJSON     `json:"grants"`
 }
 
-// AcceptInvite — POST /api/v1/auth/invite/accept (публичный): приём инвайта =
-// вход без OTP. Ответ — как у otp/verify (access-токен + refresh-cookie).
+// AcceptInvite — POST /api/v1/auth/invite/accept (публичный).
+//
+// НОВЫЙ пользователь → сразу вход без OTP: ответ как у otp/verify (access-токен
+// + refresh-cookie). СУЩЕСТВУЮЩИЙ пользователь → привязка/грант созданы, но
+// сессия по ссылке НЕ выдаётся (иначе — угон аккаунта по известному телефону):
+// 200 {linked:true, login_required:true}, вход обычным OTP.
 func (h *Handler) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	rid := httpx.RequestIDFromContext(r.Context())
 	var req acceptRequest
@@ -89,7 +93,14 @@ func (h *Handler) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, r, apiErr)
 		return
 	}
-	auth.WriteLogin(w, res)
+	if res.Created {
+		auth.WriteLogin(w, res.Login)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"linked":         true,
+		"login_required": true,
+	})
 }
 
 // CreateOwner — POST /api/v1/admin/owners (УК-админ): инвайт владельца на квартиру.

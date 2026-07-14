@@ -181,15 +181,36 @@ func (r *Repo) AttachAccessGrant(ctx context.Context, userID, accessPointID, mcI
 	return nil
 }
 
+// Accepted — результат принятия инвайта (для выдачи токенов и аудита).
+// Created=false → пользователь по телефону УЖЕ существовал: привязка/грант
+// созданы, но сессия НЕ выдаётся (вход обычным OTP) — см. AcceptInviteTx.
+type Accepted struct {
+	UserID        string
+	Created       bool
+	TargetKind    string
+	MCID          string
+	ApartmentID   string
+	AccessPointID string
+}
+
 // AcceptInviteTx атомарно принимает инвайт по token_hash: блокирует строку
 // (FOR UPDATE), проверяет валидность (used/expiry), находит-или-создаёт
 // пользователя по телефону, привязывает роль (квартира) или грант (точка) и
 // помечает инвайт used. Пометка used атомарна (WHERE used_at IS NULL): проигрыш
-// гонки → INVITE_INVALID. Возвращает id пользователя для выдачи токенов.
-func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Time) (string, *httpx.Error) {
+// гонки → INVITE_INVALID.
+//
+// Безопасность (ревью, этап 6):
+//   - по телефону ищется/создаётся ТОЛЬКО жилец/владелец. Если телефон принадлежит
+//     mc_admin — отказ (INVITE_INVALID): иначе приём инвайта выпустил бы админский
+//     токен (эскалация привилегий, в т.ч. на чужую УК).
+//   - Created сообщает, был ли пользователь создан этим приёмом. Сессия по
+//     bearer-ссылке выдаётся только НОВОМУ пользователю (красть нечего);
+//     существующему — только привязка, вход обычным OTP (иначе кто угодно, зная
+//     телефон, выпускал бы себе сессию за чужого жильца со всеми его ролями).
+func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Time) (Accepted, *httpx.Error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+		return Accepted{}, httpx.NewError(httpx.CodeInternal, "Internal server error")
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -210,57 +231,103 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 		&role, &mcID, &createdBy, &usedAt, &expiresAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", httpx.NewError(httpx.CodeInviteInvalid, "Invite not found")
+		return Accepted{}, httpx.NewError(httpx.CodeInviteInvalid, "Invite not found")
 	}
 	if err != nil {
-		return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+		return Accepted{}, httpx.NewError(httpx.CodeInternal, "Internal server error")
 	}
+	internalErr := httpx.NewError(httpx.CodeInternal, "Internal server error")
+	// Отказ по чужому kind маскируем под «инвайт не найден» — не подтверждаем
+	// существование админа с таким телефоном.
+	notFound := httpx.NewError(httpx.CodeInviteInvalid, "Invite not found")
 
 	// Валидность (used → expiry) — чистой логикой Invite.Validate.
 	inv := Invite{TokenHash: tokenHash, UsedAt: usedAt, ExpiresAt: expiresAt}
 	if apiErr := inv.Validate(now); apiErr != nil {
-		return "", apiErr
+		return Accepted{}, apiErr
 	}
 	if phone == nil || *phone == "" {
-		return "", httpx.NewError(httpx.CodeInviteInvalid, "Invite has no target phone")
+		return Accepted{}, httpx.NewError(httpx.CodeInviteInvalid, "Invite has no target phone")
 	}
 
-	// find-or-create пользователя по телефону. Новый kind: owner для
-	// apartment_owner, иначе resident (существующему kind не меняем).
+	// find-or-create пользователя по телефону (только жилец/владелец, см. док).
 	newKind := "resident"
 	if targetKind == "apartment_owner" {
 		newKind = "owner"
 	}
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO users (id, phone, kind) VALUES ($1, $2, $3)
-		 ON CONFLICT (phone) DO NOTHING`,
-		uuid.NewString(), *phone, newKind,
-	); err != nil {
-		return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
-	}
-	var userID string
-	if err := tx.QueryRow(ctx, `SELECT id::text FROM users WHERE phone = $1`, *phone).Scan(&userID); err != nil {
-		return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+	var (
+		userID       string
+		existingKind string
+		created      bool
+	)
+	err = tx.QueryRow(ctx, `SELECT id::text, kind FROM users WHERE phone = $1`, *phone).
+		Scan(&userID, &existingKind)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		newID := uuid.NewString()
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO users (id, phone, kind) VALUES ($1, $2, $3)
+			 ON CONFLICT (phone) DO NOTHING`,
+			newID, *phone, newKind,
+		)
+		if err != nil {
+			return Accepted{}, internalErr
+		}
+		if tag.RowsAffected() == 1 {
+			userID, created = newID, true
+			break
+		}
+		// Гонка: строку с этим телефоном вставил кто-то между SELECT и INSERT —
+		// перечитываем и работаем как с существующим пользователем.
+		if err := tx.QueryRow(ctx, `SELECT id::text, kind FROM users WHERE phone = $1`, *phone).
+			Scan(&userID, &existingKind); err != nil {
+			return Accepted{}, internalErr
+		}
+		if existingKind == "mc_admin" {
+			return Accepted{}, notFound
+		}
+	case err != nil:
+		return Accepted{}, internalErr
+	default:
+		// Телефон уже принадлежит УК-админу → приём инвайта выпустил бы админский
+		// токен. Отказ.
+		if existingKind == "mc_admin" {
+			return Accepted{}, notFound
+		}
+		// Владельческий инвайт повышает жильца до владельца (kind в users иначе
+		// остался бы resident и врал бы в выборках УК; сами права — по roles).
+		if targetKind == "apartment_owner" && existingKind == "resident" {
+			if _, err := tx.Exec(ctx,
+				`UPDATE users SET kind = 'owner' WHERE id = $1 AND kind = 'resident'`, userID,
+			); err != nil {
+				return Accepted{}, internalErr
+			}
+		}
 	}
 
 	// Привязка по типу инвайта (идемпотентно).
 	switch targetKind {
 	case "apartment_owner", "apartment_resident":
 		if apartmentID == nil || role == nil {
-			return "", httpx.NewError(httpx.CodeInternal, "Malformed invite")
+			return Accepted{}, httpx.NewError(httpx.CodeInternal, "Malformed invite")
 		}
+		// Владельческий инвайт ПОВЫШАЕТ существующую роль до owner (жилец этой же
+		// квартиры стал её владельцем); жилецкий инвайт владельца НЕ понижает.
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO user_apartment_roles
 				(id, user_id, apartment_id, management_company_id, role, created_by)
 			 VALUES ($1, $2, $3, $4, $5, $6)
-			 ON CONFLICT (user_id, apartment_id) DO NOTHING`,
+			 ON CONFLICT (user_id, apartment_id) DO UPDATE
+			 SET role = CASE WHEN EXCLUDED.role = 'owner'
+			                 THEN 'owner'
+			                 ELSE user_apartment_roles.role END`,
 			uuid.NewString(), userID, *apartmentID, mcID, *role, createdBy,
 		); err != nil {
-			return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+			return Accepted{}, internalErr
 		}
 	case "access_grant":
 		if accessPointID == nil {
-			return "", httpx.NewError(httpx.CodeInternal, "Malformed invite")
+			return Accepted{}, httpx.NewError(httpx.CodeInternal, "Malformed invite")
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO user_access_grants
@@ -269,10 +336,10 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 			 ON CONFLICT (user_id, access_point_id) DO NOTHING`,
 			uuid.NewString(), userID, *accessPointID, mcID, createdBy,
 		); err != nil {
-			return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+			return Accepted{}, internalErr
 		}
 	default:
-		return "", httpx.NewError(httpx.CodeInternal, "Unknown invite target")
+		return Accepted{}, httpx.NewError(httpx.CodeInternal, "Unknown invite target")
 	}
 
 	// Атомарная пометка used: проигрыш гонки (0 строк) → инвайт уже использован.
@@ -281,16 +348,24 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 		now, userID, inviteID,
 	)
 	if err != nil {
-		return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+		return Accepted{}, internalErr
 	}
 	if tag.RowsAffected() == 0 {
-		return "", httpx.NewError(httpx.CodeInviteInvalid, "Invite has already been used")
+		return Accepted{}, httpx.NewError(httpx.CodeInviteInvalid, "Invite has already been used")
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", httpx.NewError(httpx.CodeInternal, "Internal server error")
+		return Accepted{}, internalErr
 	}
-	return userID, nil
+
+	res := Accepted{UserID: userID, Created: created, TargetKind: targetKind, MCID: mcID}
+	if apartmentID != nil {
+		res.ApartmentID = *apartmentID
+	}
+	if accessPointID != nil {
+		res.AccessPointID = *accessPointID
+	}
+	return res, nil
 }
 
 // ResolveGrantedPoint реализует access.PointResolver: активный грant пользователя
