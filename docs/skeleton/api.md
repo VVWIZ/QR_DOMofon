@@ -22,6 +22,13 @@ Backend: `http://localhost:8080`. Все ответы — JSON, время — U
 | GET | `/api/v1/resident/events` | resident (токен в `?token=`) | SSE-поток событий жильца | 200 (stream) | 401 `UNAUTHORIZED` |
 | GET | `/api/v1/devices` | admin | Список устройств со статусом (скоуп по `mc_id`) | 200 | 401 `UNAUTHORIZED`, 403 `FORBIDDEN` |
 | GET | `/api/v1/audit/events?limit=N` | admin | Последние события аудита (скоуп по `mc_id`) | 200 | 401 `UNAUTHORIZED`, 403 `FORBIDDEN` |
+| POST | `/api/v1/auth/invite/accept` | public | Приём инвайт-ссылки: привязка + вход (новому — без OTP) | 200 | 400 `VALIDATION_ERROR`, 404 `INVITE_INVALID`, 410 `INVITE_EXPIRED`, 429 `RATE_LIMIT` |
+| POST | `/api/v1/admin/owners` | admin | УК создаёт владельца квартиры → инвайт-ссылка | 201 | 400 `VALIDATION_ERROR`, 401, 403 |
+| POST | `/api/v1/admin/access-grants` | admin | УК выдаёт доступ на калитку/шлагбаум (грант или инвайт) | 200 / 201 | 400 `VALIDATION_ERROR`, 401, 403 |
+| GET | `/api/v1/admin/residents` | admin | Жильцы/владельцы своей УК (скоуп по `mc_id`) | 200 | 401, 403 |
+| POST | `/api/v1/apartments/{apartment_id}/residents/invite` | resident (владелец) | Владелец приглашает жильца в СВОЮ квартиру | 201 | 400 `VALIDATION_ERROR`, 401, 403 `FORBIDDEN` |
+| GET | `/api/v1/access/points` | resident | Точки с постоянным грантом + online-статус | 200 | 401 `UNAUTHORIZED` |
+| POST | `/api/v1/access/open-point` | resident | Прямое открытие калитки/шлагбаума по гранту (без звонка) | 200 | 400, 401, 403 `FORBIDDEN`, 503 `DEVICE_OFFLINE` |
 
 **Доступ:** `public` — без токена (публичные POST под лимитером `publicRL` 30 req/мин на IP: `qr/validate`, `calls/initiate`, `calls/{id}/cancel`, `calls/{id}/end`); `/auth/*` — публичные, но со своими лимитерами (см. [auth.md](auth.md)). `resident` — требуется валидный access-JWT с `kind ∈ {resident, owner}` (middleware `RequireResident`) + доменная проверка принадлежности к квартире на `accept`/`access/open`. `admin` — `kind = mc_admin` (middleware `RequireAdmin`), выборки ограничены `management_company_id` из claims. `authn` — любой валидный токен без ограничения роли.
 
@@ -51,7 +58,9 @@ Backend: `http://localhost:8080`. Все ответы — JSON, время — U
 | `DEVICE_OFFLINE` | 503 | Прямое открытие невозможно: нет presence-ключа устройства. Для сценария **звонка** offline не блокирует — только warning (ТЗ §5.4, §13.4) |
 | `UNAUTHORIZED` | 401 | Токен отсутствует / просрочен / невалидная подпись; неверный OTP; неверные креды или TOTP админа; refresh не в whitelist (reuse/отозван) |
 | `FORBIDDEN` | 403 | Токен валиден, но роли недостаточно (`RequireResident`/`RequireAdmin`) либо пользователь не привязан к целевой квартире (проверка apartment-membership на `accept`/`access/open`) |
-| `RATE_LIMIT` | 429 | Превышен лимит частоты. Публичные POST под `publicRL` (30 req/мин на IP): `qr/validate`, `calls/initiate`, `calls/{id}/cancel`, `calls/{id}/end` (ТЗ §5.6). Отдельные лимитеры у `/auth/otp/*` и `/auth/admin/login` (см. [auth.md](auth.md) §OTP-лимиты). **Примечание:** `access/open` вышел из `publicRL` — теперь resident-only |
+| `RATE_LIMIT` | 429 | Превышен лимит частоты. Публичные POST под `publicRL` (30 req/мин на IP): `qr/validate`, `calls/initiate`, `calls/{id}/cancel`, `calls/{id}/end` (ТЗ §5.6). Отдельные лимитеры у `/auth/otp/*`, `/auth/admin/login` и `/auth/invite/accept` (10 req/мин на IP) |
+| `INVITE_INVALID` | 404 | Инвайт-токен не найден, уже использован, либо его телефон принадлежит УК-админу (отказ маскируется под «не найден») |
+| `INVITE_EXPIRED` | 410 | Инвайт просрочен (TTL 7 дней). 410 Gone — ресурс существовал, но истёк |
 | `INTERNAL` | 500 | Необработанная ошибка сервера |
 
 `request_id` в конверте — идентификатор HTTP-запроса для корреляции с логами (не путать с `request_id` MQTT-команды).
@@ -384,6 +393,90 @@ data: {"call_id":"b7e2a4c8-1f3d-4e5a-9c6b-8d7f0a1b2c3d"}
   ]
 }
 ```
+
+## Онбординг и гранты доступа (инкремент онбординга)
+
+Кто кого заводит (утверждённая модель): **УК** создаёт **владельцев** и раздаёт доступ на **калитки/шлагбаумы**, видит всех жильцов своей УК, но жильцов НЕ создаёт. **Владелец** создаёт/приглашает **жильцов** в свою квартиру. Доставка инвайта — мок: секрет-ссылка возвращается в ответе API (как `dev_code` у OTP).
+
+**Инвайт-токен.** 32 байта `crypto/rand` → base64url (43 симв.). В БД хранится ТОЛЬКО `sha256(token)` — секрет невосстановим. TTL 7 дней, одноразовый (атомарный `used_at`: проигрыш гонки → `INVITE_INVALID`). Ссылка: `{VISITOR_BASE_URL}/invite/{token}`.
+
+> **Резидентский UI — мобильное приложение (ТЗ §14), не веб.** На вебе живёт только УК-консоль (`/admin`). Приём инвайта, `access/points`, `open-point`, приглашение жильца — API, потребитель — мобильный клиент (iOS/Android). Для шлагбаумов QR не используется — управление только из приложения (ТЗ §4.6, §4.7).
+
+### POST /api/v1/auth/invite/accept
+
+Публичный (лимитер 10 req/мин на IP). Тело: `{"token": "<секрет из ссылки>"}`.
+
+Поведение зависит от того, существует ли уже пользователь с телефоном инвайта:
+
+| Случай | Ответ |
+|---|---|
+| Пользователь **новый** (создан этим приёмом) | 200 — как `otp/verify`: `access_token` + профиль + refresh-cookie. **Вход без OTP** |
+| Пользователь **уже существует** | 200 `{"linked": true, "login_required": true}` — привязка/грант созданы, но **сессия НЕ выдаётся**; вход обычным OTP |
+
+**Почему так (security, этап 6).** Bearer-ссылка = вход без подтверждения телефона. Для нового пользователя красть нечего. Для существующего выдача сессии означала бы: кто угодно, зная телефон, выпускает себе сессию за чужого жильца со всеми его ролями (в т.ч. в других УК). Поэтому auto-login — только новым.
+
+Дополнительно: телефон, принадлежащий **`mc_admin`**, инвайтом не принимается (иначе приём выпускал бы админский токен — эскалация привилегий, в т.ч. на чужую УК). Ответ маскируется под `INVITE_INVALID`.
+
+### POST /api/v1/admin/owners
+
+Admin. Тело: `{"apartment_id": "<uuid>", "phone": "+7…"}`. Квартира должна принадлежать УК админа (иначе — `VALIDATION_ERROR "Apartment not found"`, неотличимо от несуществующей: закрыт enumeration чужих объектов).
+
+```json
+{ "invite": { "token": "vLiJJUx-aN8-…", "url": "http://localhost:5173/invite/vLiJJUx-aN8-…", "expires_at": "2026-07-20T17:36:47Z" } }
+```
+
+Приём такого инвайта существующим жильцом квартиры **повышает** его роль до `owner` (и `users.kind`); жилецкий инвайт владельца не понижает.
+
+### POST /api/v1/admin/access-grants
+
+Admin. Тело: `{"access_point_public_id": "<uuid>", "phone": "+7…"}`. Точка обязана быть типа `gate`/`barrier` и принадлежать УК админа.
+
+- Пользователь **уже в этой УК** (есть роль или грант) → грант выдаётся сразу: **200** `{"granted": true, "user_id": "…", "access_point_public_id": "…"}`.
+- Иначе → **201** `{"granted": false, "invite": { … }}`.
+
+Грант не выдаётся «постороннему» без активации инвайта — иначе admin мог бы привязать доступ к произвольному чужому аккаунту.
+
+### GET /api/v1/admin/residents
+
+Admin. Все жильцы/владельцы своей УК (скоуп по `mc_id` из claims), с квартирами и грантами.
+
+```json
+{
+  "residents": [
+    {
+      "user_id": "1f87d09e-…",
+      "phone": "+77010000012",
+      "kind": "resident",
+      "apartments": [],
+      "grants": [{ "public_id": "eeeeeeee-…", "label": "Калитка двора" }]
+    }
+  ]
+}
+```
+
+### POST /api/v1/apartments/{apartment_id}/residents/invite
+
+Resident-группа + доменная проверка **ownership**: приглашать вправе только владелец ЭТОЙ квартиры (роль `owner` с этим `apartment_id` в claims). Жилец той же квартиры, владелец другой квартиры и `mc_admin` → `403 FORBIDDEN`. Тело: `{"phone": "+7…"}` → 201 `{ "invite": { … } }`.
+
+### GET /api/v1/access/points
+
+Resident. Точки, на которые у пользователя есть постоянный грант, + online-статус устройства.
+
+```json
+{ "points": [ { "public_id": "eeeeeeee-…", "label": "Калитка двора", "type": "gate", "online": true } ] }
+```
+
+### POST /api/v1/access/open-point
+
+Resident. Тело: `{"public_id": "<uuid точки>"}`. Прямое открытие калитки/шлагбаума **по гранту, без звонка** (ТЗ §4.7): нет гейта `accept` (M1) — право даёт сам грант.
+
+- нет гранта на эту точку → `403 FORBIDDEN` (`"You do not have access to this point"`);
+- устройство offline → `503 DEVICE_OFFLINE` (команда не публикуется);
+- успех → `200 {"request_id": "…", "status": "sent"}` + MQTT `open_relay` + аудит `door_open_requested`.
+
+**Нормализация телефона.** Все телефоны приводятся к `+<цифры>` (разделители выбрасываются, локальная `8XXXXXXXXXX` → `+7…`): `8 (701) 000-00-10` и `+77010000010` — один и тот же пользователь.
+
+**Аудит онбординга:** `invite_created`, `invite_accepted`, `access_grant_created` (+ `door_open_requested` на открытии точки). Секрет-токены в аудит и логи не попадают.
 
 ## Sequence-диаграмма happy path
 

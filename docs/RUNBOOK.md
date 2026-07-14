@@ -85,6 +85,12 @@ go run ./cmd/server
 - УК-админ: `admin@demo.example` / пароль `admin-demo-123` / TOTP-secret `JBSWY3DPEHPK3PXP`
   (завести в приложение-аутентификатор).
 
+**`VISITOR_BASE_URL`** (опционально, дефолт `http://localhost:5173`) — база инвайт-ссылок
+онбординга: ответ API отдаёт `{VISITOR_BASE_URL}/invite/{token}`. Менять, если фронт не на :5173.
+
+Миграции: `0001_init`, `0002_seed`, `0003_auth`, `0004_auth_seed`, `0005_onboarding` — применяются
+автоматически при старте.
+
 ---
 
 ## 4. Эмулятор устройства
@@ -98,6 +104,17 @@ go build -ldflags="-s -w" -o emulator.exe .   # -ldflags обходит ложн
 Проверка: `curl http://localhost:8080/api/v1/devices` → `"status":"online"` (heartbeat дошёл).
 
 > Без `-ldflags="-s -w"` Kaspersky выдаёт `Access is denied` при запуске бинаря.
+
+**Второе устройство — калитка (EMU-002)** нужно для сценария прямого открытия по гранту
+(`POST /access/open-point`, инкремент онбординга). Это тот же бинарь с другими флагами — запускать
+**во втором окне**, параллельно с EMU-001:
+
+```powershell
+.\emulator.exe -device-id dddddddd-dddd-dddd-dddd-dddddddddddd -device-serial EMU-002
+```
+
+Точка `Калитка двора` (`public_id = eeeeeeee-…`, type `gate`) и устройство EMU-002 приезжают
+сидом миграции `0005_onboarding.sql`.
 
 ---
 
@@ -125,6 +142,14 @@ go run ./cmd/qrgen
 http://localhost:5173/v?aid=55555555-5555-5555-5555-555555555555&v=1&kid=dev1&sig=oRnZ1qQnxcI1GrLWAmBYrmVIH__CG-K6
 ```
 Жилец: `http://localhost:5173/resident` (второе окно браузера).
+
+**УК-консоль:** `http://localhost:5173/admin` — вход админом (`/login` → вкладка «Администратор»).
+Создать владельца, выдать доступ на калитку/шлагбаум, список жильцов. Инвайт-ссылка возвращается
+прямо в консоли (мок доставки — копируется кнопкой).
+
+> **Резидентские флоу онбординга** (приём инвайта, открытие калиток, приглашение жильца) на вебе
+> НЕ реализованы: по ТЗ §14 это мобильное приложение. Проверять их — через API (см. `api.md`
+> §Онбординг), напр. `POST /api/v1/auth/invite/accept {"token":"…"}`.
 
 ---
 
