@@ -253,6 +253,12 @@ func main() {
 			r.Post("/admin/access-grants", onboardingHandler.CreateAccessGrant)
 			r.Get("/admin/residents", onboardingHandler.ListResidents)
 			r.Get("/admin/catalog", onboardingHandler.ListCatalog)
+			// Матрица доступа (инкремент D): объекты, матрица, раскрытие жильцов, тогл гранта.
+			r.Get("/admin/sites", onboardingHandler.ListSites)
+			r.Get("/admin/sites/{site_id}/matrix", onboardingHandler.SiteMatrix)
+			r.Get("/admin/apartments/{apartment_id}/residents", onboardingHandler.ApartmentResidents)
+			r.Put("/admin/users/{user_id}/grants/{point_public_id}", onboardingHandler.GrantPoint)
+			r.Delete("/admin/users/{user_id}/grants/{point_public_id}", onboardingHandler.RevokePoint)
 		})
 
 		// --- SystemAdmin-only (платформенная админка: УК/объекты/дома/подъезды) ---
