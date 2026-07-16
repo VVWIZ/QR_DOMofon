@@ -286,7 +286,17 @@ func (s *Service) OpenPoint(ctx context.Context, userID, publicID string) (OpenR
 		s.log.Warn("open_point_forbidden", "user_id", userID, "public_id", publicID)
 		return OpenResult{}, httpx.NewError(httpx.CodeForbidden, "You do not have access to this point")
 	}
+	return s.OpenResolved(ctx, gp, "resident:"+userID, nil)
+}
 
+// OpenResolved исполняет открытие уже РАЗРЕШЁННОЙ точки gp: presence устройства
+// (offline → 503 DEVICE_OFFLINE, publish не вызывается), публикация open_relay,
+// best-effort cmdCtx.Save и аудит door_open_requested. Право доступа проверено
+// вызывающим — этот метод его НЕ проверяет. actor — субъект аудита («resident:…»,
+// «guest:…»); extraMeta домешивается в metadata аудита (напр. guest_id).
+// Общий «хвост» открытия: используется OpenPoint (по гранту) и гостевым доступом
+// (через адаптер), поэтому наблюдаемое поведение обоих идентично.
+func (s *Service) OpenResolved(ctx context.Context, gp GrantedPoint, actor string, extraMeta map[string]any) (OpenResult, *httpx.Error) {
 	online, err := s.presence.IsOnline(ctx, gp.DeviceID)
 	if err != nil {
 		s.log.Error("presence_check_failed", "error", err, "device_id", gp.DeviceID)
@@ -297,14 +307,13 @@ func (s *Service) OpenPoint(ctx context.Context, userID, publicID string) (OpenR
 	}
 
 	requestID := uuid.NewString()
-	issuedBy := "resident:" + userID
 	issuedAt := time.Now().UTC().Format(time.RFC3339)
 
 	cmd := OpenRelayCommand{
 		RelayID:    relayID,
 		DurationMs: durationMs,
 		RequestID:  requestID,
-		IssuedBy:   issuedBy,
+		IssuedBy:   actor,
 		IssuedAt:   issuedAt,
 	}
 	if err := s.publisher.PublishOpenRelay(ctx, gp.DeviceID, cmd); err != nil {
@@ -322,14 +331,19 @@ func (s *Service) OpenPoint(ctx context.Context, userID, publicID string) (OpenR
 		s.log.Warn("cmd_context_save_failed", "error", err, "request_id", requestID)
 	}
 
+	meta := map[string]any{"relay_id": relayID, "duration_ms": durationMs}
+	for k, v := range extraMeta {
+		meta[k] = v
+	}
 	if err := s.audit.Record(ctx, audit.Event{
 		EventType:           "door_open_requested",
-		Actor:               issuedBy,
+		Actor:               actor,
+		ApartmentID:         gp.ApartmentID,
 		AccessPointID:       gp.AccessPointID,
 		DeviceID:            gp.DeviceID,
 		RequestID:           requestID,
 		ManagementCompanyID: gp.ManagementCompanyID,
-		Metadata:            map[string]any{"relay_id": relayID, "duration_ms": durationMs},
+		Metadata:            meta,
 	}); err != nil {
 		s.log.Error("audit_record_failed", "error", err, "event_type", "door_open_requested")
 	}

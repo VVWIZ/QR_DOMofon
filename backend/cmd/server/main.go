@@ -23,6 +23,7 @@ import (
 	"domofon/backend/internal/auth"
 	"domofon/backend/internal/calls"
 	"domofon/backend/internal/devices"
+	"domofon/backend/internal/guests"
 	"domofon/backend/internal/onboarding"
 	"domofon/backend/internal/platform/config"
 	"domofon/backend/internal/platform/httpx"
@@ -157,6 +158,13 @@ func main() {
 	accessSvc.SetPointResolver(onboardingRepo)
 	accessSvc.SetPointLister(onboardingRepo)
 
+	// --- Гостевой доступ (инкремент B) ---
+	// Открытие точки гостем переиспользует access-машинерию через адаптер
+	// DoorOpener → accessSvc.OpenResolved (presence/publish/audit).
+	guestsRepo := guests.NewRepo(pool)
+	guestsSvc := guests.NewService(guestsRepo, guestDoorOpener{svc: accessSvc}, presence, cfg.VisitorBaseURL, recorder, log)
+	guestsHandler := guests.NewHandler(guestsSvc)
+
 	// --- Хендлеры ---
 	qrHandler := qr.NewHandler(qrKeyring, qrPropertyAdapter{svc: propertySvc}, presence)
 	callsHandler := calls.NewHandler(callSvc)
@@ -203,6 +211,11 @@ func main() {
 			r.With(authn).Get("/me", authHandler.Me)
 		})
 
+		// --- Гостевой доступ по ссылке (публичный, по токену-capability) ---
+		// GET страницы — под publicRL; открытие — под строгим authRL (чувствительнее).
+		r.With(publicRL).Get("/g/{token}", guestsHandler.View)
+		r.With(authRL).Post("/g/{token}/open", guestsHandler.Open)
+
 		// --- Resident-only (authn + RequireResident + доменная apartment-проверка) ---
 		r.Group(func(r chi.Router) {
 			r.Use(authn)
@@ -215,6 +228,13 @@ func main() {
 			r.Post("/access/open-point", accessHandler.OpenPoint)
 			// Владелец приглашает жильца в свою квартиру (проверка ownership — в сервисе).
 			r.Post("/apartments/{apartment_id}/residents/invite", onboardingHandler.InviteResident)
+
+			// Гостевой доступ: создание/список/отзыв + делегирование права (гости).
+			r.Get("/apartments/{apartment_id}/guest-points", guestsHandler.GuestPoints)
+			r.Post("/apartments/{apartment_id}/guests", guestsHandler.CreateGuest)
+			r.Get("/apartments/{apartment_id}/guests", guestsHandler.ListGuests)
+			r.Post("/guests/{guest_id}/revoke", guestsHandler.RevokeGuest)
+			r.Put("/apartments/{apartment_id}/residents/{user_id}/guest-permission", guestsHandler.SetPermission)
 		})
 
 		// --- Admin-only (authn + RequireAdmin, скоуп выборок по mc_id из claims) ---
@@ -358,6 +378,25 @@ func (a callStoreAdapter) Lookup(ctx context.Context, callID string) (access.Cal
 		ManagementCompanyID: s.ManagementCompanyID,
 		State:               s.State,
 	}, true, nil
+}
+
+// guestDoorOpener реализует guests.DoorOpener поверх access.Service.OpenResolved:
+// открытие уже разрешённой гостю точки той же машинерией, что грантовый OpenPoint
+// (presence → MQTT open_relay → аудит). Маппит guests.ResolvedPoint ↔
+// access.GrantedPoint, чтобы модуль guests не импортировал access в доменной логике.
+type guestDoorOpener struct{ svc *access.Service }
+
+func (a guestDoorOpener) OpenResolved(ctx context.Context, rp guests.ResolvedPoint, actor string, meta map[string]any) (guests.OpenResult, *httpx.Error) {
+	res, apiErr := a.svc.OpenResolved(ctx, access.GrantedPoint{
+		DeviceID:            rp.DeviceID,
+		AccessPointID:       rp.AccessPointID,
+		ApartmentID:         rp.ApartmentID,
+		ManagementCompanyID: rp.ManagementCompanyID,
+	}, actor, meta)
+	if apiErr != nil {
+		return guests.OpenResult{}, apiErr
+	}
+	return guests.OpenResult{RequestID: res.RequestID, Status: res.Status}, nil
 }
 
 // commandPublisherAdapter связывает access.CommandPublisher с devices.Commander.
