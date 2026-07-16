@@ -33,6 +33,12 @@ const (
 	// INVITE_EXPIRED (410 Gone — ресурс существовал, но истёк).
 	CodeInviteInvalid Code = "INVITE_INVALID"
 	CodeInviteExpired Code = "INVITE_EXPIRED"
+
+	// Инкремент B (гостевой доступ). Гостевой токен /g/{token}: не найден/чужой →
+	// GUEST_INVALID (404); вне окна valid_from..valid_to или отозван → GUEST_EXPIRED
+	// (410 Gone). Отказ по производному доступу/точке вне набора → FORBIDDEN (403).
+	CodeGuestInvalid Code = "GUEST_INVALID"
+	CodeGuestExpired Code = "GUEST_EXPIRED"
 )
 
 // ErrorResponse — единый конверт ошибки (сериализуется в тело ответа).
@@ -68,9 +74,9 @@ func HTTPStatus(code Code) int {
 		return http.StatusUnauthorized
 	case CodeForbidden:
 		return http.StatusForbidden
-	case CodeCallNotFound, CodeInviteInvalid:
+	case CodeCallNotFound, CodeInviteInvalid, CodeGuestInvalid:
 		return http.StatusNotFound
-	case CodeInviteExpired:
+	case CodeInviteExpired, CodeGuestExpired:
 		return http.StatusGone
 	case CodeCallNotAccepted, CodeCallInProgress:
 		return http.StatusConflict
