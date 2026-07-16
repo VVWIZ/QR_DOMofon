@@ -3,6 +3,7 @@ import { VisitorPage } from './pages/VisitorPage';
 import { ResidentPage } from './pages/ResidentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
+import { GuestPage } from './pages/GuestPage';
 import { AuthProvider } from './auth/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
@@ -37,6 +38,7 @@ export function App() {
     <AuthProvider>
       <Routes>
         <Route path="/v" element={<VisitorPage />} />
+        <Route path="/g/:token" element={<GuestPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
           path="/resident"

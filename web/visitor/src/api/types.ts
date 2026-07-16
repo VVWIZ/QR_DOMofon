@@ -209,6 +209,29 @@ export interface CatalogResponse {
   points: CatalogPoint[];
 }
 
+// --- Гостевой доступ (публичная страница /g/{token}) ---
+
+export interface GuestPoint {
+  public_id: string;
+  label: string;
+  type: 'entrance' | 'gate' | 'barrier';
+  online: boolean;
+}
+
+/** Ответ GET /api/v1/g/{token} (200). */
+export interface GuestViewResponse {
+  guest_name: string;
+  valid_from: string;
+  valid_to: string;
+  points: GuestPoint[];
+}
+
+/** Ответ POST /api/v1/g/{token}/open (200). */
+export interface GuestOpenResponse {
+  request_id: string;
+  status: string;
+}
+
 // --- SSE-события GET /api/v1/resident/events ---
 
 export interface SseCallIncoming {

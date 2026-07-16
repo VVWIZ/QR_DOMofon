@@ -6,6 +6,8 @@ import type {
   CreateGrantResponse,
   CreateOwnerResponse,
   DevicesResponse,
+  GuestOpenResponse,
+  GuestViewResponse,
   InitiateResponse,
   LoginResponse,
   OpenDoorResponse,
@@ -209,6 +211,16 @@ export const api = {
     }),
 
   adminListResidents: () => request<ResidentsResponse>('/admin/residents'),
+
+  // --- Гостевая ссылка (публичная, без Bearer) ---
+  guestView: (token: string) =>
+    request<GuestViewResponse>(`/g/${encodeURIComponent(token)}`, {}, { skipAuth: true }),
+
+  guestOpen: (token: string, public_id: string) =>
+    request<GuestOpenResponse>(`/g/${encodeURIComponent(token)}/open`, {
+      method: 'POST',
+      body: JSON.stringify({ public_id }),
+    }, { skipAuth: true }),
 };
 
 /** Человекочитаемое сообщение из любой ошибки. */
