@@ -101,6 +101,13 @@ QR-URL (/v?aid&v=1&kid&sig)
 
 Звонки и presence в БД **не хранятся** — это эфемерное состояние в Redis (см. §4). `call_id` в аудите достаточно для трассировки.
 
+**Инкремент auth (0003–0004):** `users`, `user_apartment_roles`. **Инкремент онбординга (0005):** `invites` (хранится только `sha256(token)`), `user_access_grants`.
+
+**Инкремент A — подъезды/композитный инвайт (0006):**
+- `entrances` (`id`, `building_id FK`, `management_company_id`, `number`, `UNIQUE(building_id,number)`, `UNIQUE(id,building_id)`) — иерархия `building → entrance → apartment/access_point`. **Осознанное расширение ТЗ:** в диаграмме иерархии ТЗ §2.1 подъезд есть, но в §2.2 отдельной сущности Entrance нет (Apartment/AccessPoint ссылаются на `building_id`). Ввели таблицу, т.к. подъезд ≠ точка доступа (существует без устройства, точек может быть >1).
+- `apartments.entrance_id` / `access_points.entrance_id` — **nullable**, композитный `FK (entrance_id, building_id)` (гард «подъезд чужого дома»; NULL пропускается). `building_id` **сохранён везде** — это expand-фаза expand-contract: горячий `property.ResolveByPublicID` джойнит по `building_id` и НЕ изменён. Перевод резолва на подъезды и `entrance_id NOT NULL` (contract-фаза) — **долг инкремента звонковой логики**.
+- `users.full_name`, `invites.full_name` (ФИО, nullable), `invite_access_points` (доп. гранты композитного инвайта; `PK(invite_id, access_point_id)`).
+
 ---
 
 ## 4. Ключевые решения
