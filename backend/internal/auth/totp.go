@@ -22,3 +22,17 @@ func VerifyTOTP(secret, code string, now time.Time) bool {
 	}
 	return ok
 }
+
+// GenerateTOTPSecret создаёт новый TOTP-секрет для аккаунта account (email).
+// Возвращает base32-секрет (в БД, users.totp_secret) и otpauth://-URI для QR/ввода
+// в приложение-аутентификатор (отдаётся создателю ОДИН раз, в логи/аудит не пишется).
+func GenerateTOTPSecret(account string) (secret, otpauthURL string, err error) {
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "QR-Domofon",
+		AccountName: account,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return key.Secret(), key.URL(), nil
+}

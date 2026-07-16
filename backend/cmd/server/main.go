@@ -33,6 +33,7 @@ import (
 	predis "domofon/backend/internal/platform/redis"
 	"domofon/backend/internal/property"
 	"domofon/backend/internal/qr"
+	"domofon/backend/internal/sysadmin"
 	"domofon/backend/migrations"
 )
 
@@ -165,6 +166,10 @@ func main() {
 	guestsSvc := guests.NewService(guestsRepo, guestDoorOpener{svc: accessSvc}, presence, cfg.VisitorBaseURL, recorder, log)
 	guestsHandler := guests.NewHandler(guestsSvc)
 
+	// --- Платформенная админка (инкремент C) ---
+	sysadminSvc := sysadmin.NewService(sysadmin.NewRepo(pool), recorder, log)
+	sysadminHandler := sysadmin.NewHandler(sysadminSvc)
+
 	// --- Хендлеры ---
 	qrHandler := qr.NewHandler(qrKeyring, qrPropertyAdapter{svc: propertySvc}, presence)
 	callsHandler := calls.NewHandler(callSvc)
@@ -248,6 +253,20 @@ func main() {
 			r.Post("/admin/access-grants", onboardingHandler.CreateAccessGrant)
 			r.Get("/admin/residents", onboardingHandler.ListResidents)
 			r.Get("/admin/catalog", onboardingHandler.ListCatalog)
+		})
+
+		// --- SystemAdmin-only (платформенная админка: УК/объекты/дома/подъезды) ---
+		r.Group(func(r chi.Router) {
+			r.Use(authn)
+			r.Use(auth.RequireSystemAdmin)
+			r.Get("/system/management-companies", sysadminHandler.ListMCs)
+			r.Post("/system/management-companies", sysadminHandler.CreateMC)
+			r.Post("/system/management-companies/{mc_id}/admins", sysadminHandler.CreateMCAdmin)
+			r.Get("/system/management-companies/{mc_id}/catalog", sysadminHandler.Catalog)
+			r.Post("/system/sites", sysadminHandler.CreateSite)
+			r.Post("/system/buildings", sysadminHandler.CreateBuilding)
+			r.Post("/system/entrances", sysadminHandler.CreateEntrance)
+			r.Patch("/system/buildings/{building_id}", sysadminHandler.MoveBuilding)
 		})
 	})
 
