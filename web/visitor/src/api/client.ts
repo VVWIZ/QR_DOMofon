@@ -1,8 +1,11 @@
 import type {
   AcceptResponse,
+  AdminSitesResponse,
+  ApartmentResidentsResponse,
   ApiErrorEnvelope,
   AuthUser,
   CatalogResponse,
+  MatrixResponse,
   CreateGrantResponse,
   CreateOwnerResponse,
   DevicesResponse,
@@ -215,6 +218,27 @@ export const api = {
     }),
 
   adminListResidents: () => request<ResidentsResponse>('/admin/residents'),
+
+  // --- Матрица доступа (инкремент D) ---
+  adminListSites: () => request<AdminSitesResponse>('/admin/sites'),
+
+  adminSiteMatrix: (siteId: string) =>
+    request<MatrixResponse>(`/admin/sites/${encodeURIComponent(siteId)}/matrix`),
+
+  adminApartmentResidents: (apartmentId: string) =>
+    request<ApartmentResidentsResponse>(`/admin/apartments/${encodeURIComponent(apartmentId)}/residents`),
+
+  adminGrant: (userId: string, publicId: string) =>
+    request<{ granted: boolean }>(
+      `/admin/users/${encodeURIComponent(userId)}/grants/${encodeURIComponent(publicId)}`,
+      { method: 'PUT' },
+    ),
+
+  adminRevoke: (userId: string, publicId: string) =>
+    request<{ granted: boolean }>(
+      `/admin/users/${encodeURIComponent(userId)}/grants/${encodeURIComponent(publicId)}`,
+      { method: 'DELETE' },
+    ),
 
   // --- Платформенная админка (/system, роль system_admin) ---
   sysListMCs: () => request<SysMCsResponse>('/system/management-companies'),

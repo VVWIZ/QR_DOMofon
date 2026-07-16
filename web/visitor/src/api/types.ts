@@ -179,6 +179,47 @@ export interface ResidentsResponse {
   residents: ResidentInfo[];
 }
 
+// --- Матрица доступа УК (инкремент D) ---
+
+export interface AdminSite {
+  id: string;
+  name: string;
+  address: string;
+  kind: 'complex' | 'standalone';
+}
+export interface AdminSitesResponse {
+  sites: AdminSite[];
+}
+export interface MatrixPoint {
+  public_id: string;
+  label: string;
+  type: 'gate' | 'barrier';
+}
+export interface MatrixApartment {
+  id: string;
+  number: string;
+}
+export interface MatrixOwner {
+  user_id: string;
+  full_name: string;
+  phone: string;
+  apartments: MatrixApartment[];
+  grants: string[]; // public_id точек с грантом
+}
+export interface MatrixResponse {
+  points: MatrixPoint[];
+  owners: MatrixOwner[];
+}
+export interface MatrixResident {
+  user_id: string;
+  full_name: string;
+  phone: string;
+  grants: string[];
+}
+export interface ApartmentResidentsResponse {
+  residents: MatrixResident[];
+}
+
 // --- Каталог УК (GET /api/v1/admin/catalog) для выпадашек формы ---
 
 export interface CatalogApartment {
