@@ -118,6 +118,12 @@ QR-URL (/v?aid&v=1&kid&sig)
 - `users.kind += system_admin` (0009) — платформенный админ: `mc_id NULL`, не проходит `RequireAdmin`. Dev-сид `sa@demo.example`.
 - Модуль `internal/sysadmin` — единственный писатель `management_companies/sites/buildings/entrances` + создатель `mc_admin` (bcrypt-пароль + серверный TOTP-секрет). onboarding не импортирует.
 
+**Инкремент D — матрица доступа:** без миграций (новые эндпоинты в `onboarding/matrix.go`); добавлен **отзыв гранта** (`DELETE user_access_grants`, скоуп по mc) — раньше был только выпуск.
+
+**Инкремент E — авто-открытие по расписанию (0010):**
+- `access_point_schedules` (`access_point_id ON DELETE CASCADE`, `dow` 0..6, `opens`/`closes` time, `timezone` IANA, `is_active`, `CHECK closes>opens`) — только gate/barrier.
+- Модуль `internal/schedules`: чистая логика окна (`Schedule.ActiveAt` в tz точки, DST/сдвиг дня) + **reconciler** (level-based тикер под `pg_try_advisory_lock`). Держит реле открытым **арендой**: короткий `open_relay` с уникальным `request_id`, переиздаётся каждый тик (`duration = lease > tick`). Команда «закрыть» не шлётся → отказ планировщика = реле закрывается само (**fail-secure**, симметрично fail-open §5.3). Публикует через `devices.Commander` (адаптер в `cmd/server`); `_ "time/tzdata"` встраивает IANA-базу (LoadLocation без zoneinfo ОС).
+
 ---
 
 ## 4. Ключевые решения
