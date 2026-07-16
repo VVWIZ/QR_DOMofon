@@ -112,6 +112,12 @@ QR-URL (/v?aid&v=1&kid&sig)
 - `guest_access` (`id`, `token_hash` UNIQUE — только SHA-256, `full_name`, `apartment_id`, `management_company_id`, `created_by FK ON DELETE CASCADE`, `valid_from/valid_to`, `revoked_at/by`; `CHECK valid_to>valid_from`, `CHECK valid_to<=valid_from+2 days`) + `guest_access_points` (`PK(guest_access_id, access_point_id)`). Гость без аккаунта, вход по токену ссылки `/g/{token}`.
 - Доступ **производный**: точки гостя ⊆ доступных создателю (подъезд квартиры по членству ∪ его `user_access_grants`); переспрашивается на КАЖДОМ открытии → отзыв гранта УК мгновенно лишает гостя точки. Открытие переиспользует `access.Service.OpenResolved` (общий «хвост» presence→MQTT→аудит, извлечённый из `OpenPoint`) через consumer-side `guests.DoorOpener` + адаптер в `cmd/server`. Токен-механика продублирована из onboarding (вынос в `platform/token` — долг).
 
+**Инкремент C — Объект + SystemAdmin (0008, 0009):**
+- `sites` (`id`, `management_company_id`, `name`, `address`, `kind` complex/standalone, `UNIQUE(mc,name)`, `UNIQUE(id,mc)`) — уровень между УК и домом (Платформа→УК→**Объект**→дом→подъезд→квартира). `sites` ≈ ТЗ §2.2.2 ResidentialComplex, шире (вмещает отдельный объект).
+- `buildings += site_id NOT NULL`, `access_points += site_id NOT NULL` (композитный FK `(site_id, mc)` — гард чужой УК). Ставим сразу `NOT NULL`: НЕТ код-путей, создающих mc/дома/точки (всё seed-only), поэтому contract-фаза не нужна. `access_points.building_id` → nullable (site-level калитка может не иметь дома) + CHECK «entrance обязан иметь дом». Калитки/шлагбаумы авторитетны по `site_id`. Работающий `ResolveByPublicID` (джойн по `building_id`) не тронут — `building_id` у существующих точек сохранён (обнуление у site-level точек — долг).
+- `users.kind += system_admin` (0009) — платформенный админ: `mc_id NULL`, не проходит `RequireAdmin`. Dev-сид `sa@demo.example`.
+- Модуль `internal/sysadmin` — единственный писатель `management_companies/sites/buildings/entrances` + создатель `mc_admin` (bcrypt-пароль + серверный TOTP-секрет). onboarding не импортирует.
+
 ---
 
 ## 4. Ключевые решения
