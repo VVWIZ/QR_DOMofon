@@ -71,12 +71,25 @@ func RequireResident(next http.Handler) http.Handler {
 }
 
 // RequireAdmin пропускает только kind = mc_admin; иначе 403 FORBIDDEN. Ставится
-// ПОСЛЕ Authenticator.
+// ПОСЛЕ Authenticator. system_admin сюда НЕ проходит (см. Kind.IsAdmin).
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, ok := ClaimsFromContext(r.Context())
 		if !ok || !c.Kind.IsAdmin() {
 			httpx.WriteError(w, httpx.CodeForbidden, "admin role required", httpx.RequestIDFromContext(r.Context()))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireSystemAdmin пропускает только kind = system_admin (платформенная
+// админка); иначе 403 FORBIDDEN. Ставится ПОСЛЕ Authenticator.
+func RequireSystemAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, ok := ClaimsFromContext(r.Context())
+		if !ok || !c.Kind.IsSystemAdmin() {
+			httpx.WriteError(w, httpx.CodeForbidden, "system admin role required", httpx.RequestIDFromContext(r.Context()))
 			return
 		}
 		next.ServeHTTP(w, r)

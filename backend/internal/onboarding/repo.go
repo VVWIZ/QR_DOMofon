@@ -321,7 +321,7 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 			Scan(&userID, &existingKind); err != nil {
 			return Accepted{}, internalErr
 		}
-		if existingKind == "mc_admin" {
+		if existingKind == "mc_admin" || existingKind == "system_admin" {
 			return Accepted{}, notFound
 		}
 	case err != nil:
@@ -329,7 +329,7 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 	default:
 		// Телефон уже принадлежит УК-админу → приём инвайта выпустил бы админский
 		// токен. Отказ.
-		if existingKind == "mc_admin" {
+		if existingKind == "mc_admin" || existingKind == "system_admin" {
 			return Accepted{}, notFound
 		}
 		// Владельческий инвайт повышает жильца до владельца (kind в users иначе

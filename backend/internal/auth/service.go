@@ -139,7 +139,9 @@ func (s *Service) AdminLogin(ctx context.Context, email, password, totpCode stri
 	if err != nil {
 		return LoginResult{}, unauth
 	}
-	if user.Kind != KindAdmin || user.PasswordHash == "" || user.TOTPSecret == "" {
+	// Один вход для обоих админ-уровней: mc_admin (УК) и system_admin (платформа).
+	// Различение — по kind в claims; UI /admin vs /system гейтит доступ сам.
+	if (user.Kind != KindAdmin && user.Kind != KindSystem) || user.PasswordHash == "" || user.TOTPSecret == "" {
 		return LoginResult{}, unauth
 	}
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {

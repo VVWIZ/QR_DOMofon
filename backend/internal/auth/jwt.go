@@ -23,6 +23,7 @@ const (
 	KindResident Kind = "resident"
 	KindOwner    Kind = "owner"
 	KindAdmin    Kind = "mc_admin"
+	KindSystem   Kind = "system_admin" // платформенный админ (наша компания); mc_id пуст
 )
 
 // TokenType — значение claim "typ": различает access и refresh (auth.md §3).

@@ -28,6 +28,10 @@ func adminVerifier(token string) stubVerifier {
 	return stubVerifier{token: token, claims: adminClaims()}
 }
 
+func systemVerifier(token string) stubVerifier {
+	return stubVerifier{token: token, claims: systemClaims()}
+}
+
 // okHandler фиксирует факт вызова next и наличие claims в context.
 type okHandler struct {
 	called bool
@@ -123,6 +127,60 @@ func TestRequireAdmin_AdminAllowed(t *testing.T) {
 
 	if !next.called {
 		t.Fatalf("next не вызван для mc_admin на RequireAdmin")
+	}
+}
+
+// КРИТИЧНО: system_admin НЕ проходит RequireAdmin (у него mc_id пуст → admin-
+// выборки дали бы пустой/чужой скоуп). Уровни доступа раздельны.
+func TestRequireAdmin_SystemAdminForbidden(t *testing.T) {
+	const token = "system-token"
+	next := &okHandler{}
+	h := Authenticator(systemVerifier(token))(RequireAdmin(next))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("статус = %d, want 403 (system_admin на RequireAdmin)", rec.Code)
+	}
+	if next.called {
+		t.Fatalf("next вызван для system_admin на RequireAdmin, want не вызван")
+	}
+}
+
+func TestRequireSystemAdmin_SystemAllowed(t *testing.T) {
+	const token = "system-token"
+	next := &okHandler{}
+	h := Authenticator(systemVerifier(token))(RequireSystemAdmin(next))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/sites", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+
+	if !next.called {
+		t.Fatalf("next не вызван для system_admin на RequireSystemAdmin")
+	}
+}
+
+// mc_admin НЕ проходит RequireSystemAdmin (не может лезть в платформенную админку).
+func TestRequireSystemAdmin_McAdminForbidden(t *testing.T) {
+	const token = "admin-token"
+	next := &okHandler{}
+	h := Authenticator(adminVerifier(token))(RequireSystemAdmin(next))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/sites", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("статус = %d, want 403 (mc_admin на RequireSystemAdmin)", rec.Code)
+	}
+	if next.called {
+		t.Fatalf("next вызван для mc_admin на RequireSystemAdmin, want не вызван")
 	}
 }
 

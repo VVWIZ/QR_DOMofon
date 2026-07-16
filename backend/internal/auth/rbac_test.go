@@ -25,6 +25,29 @@ func adminClaims() Claims {
 	}
 }
 
+func systemClaims() Claims {
+	return Claims{
+		Subject: "5a5a5a5a-5a5a-5a5a-5a5a-5a5a5a5a5a5a",
+		Kind:    KindSystem,
+		Roles:   nil,
+		MCID:    "", // платформенный админ не привязан к УК
+	}
+}
+
+// system_admin НЕ должен считаться mc-админом (иначе прошёл бы RequireAdmin и
+// получил mc-скоуп с пустым MCID). Уровни доступа строго раздельны.
+func TestKind_SystemAdminIsNotMcAdmin(t *testing.T) {
+	if systemClaims().Kind.IsAdmin() {
+		t.Fatalf("system_admin.IsAdmin() = true, want false")
+	}
+	if !systemClaims().Kind.IsSystemAdmin() {
+		t.Fatalf("system_admin.IsSystemAdmin() = false, want true")
+	}
+	if adminClaims().Kind.IsSystemAdmin() {
+		t.Fatalf("mc_admin.IsSystemAdmin() = true, want false")
+	}
+}
+
 func TestAllowApartment_ResidentOwnApartment(t *testing.T) {
 	if !AllowApartment(residentClaims(), aptOwn) {
 		t.Fatalf("AllowApartment(своя квартира) = false, want true")

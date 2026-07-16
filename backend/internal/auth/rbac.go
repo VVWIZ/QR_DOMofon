@@ -8,9 +8,17 @@ func (k Kind) IsResident() bool {
 	return k == KindResident || k == KindOwner
 }
 
-// IsAdmin — kind = mc_admin (УК-админ).
+// IsAdmin — kind = mc_admin (УК-админ). НАМЕРЕННО не включает system_admin:
+// у платформенного админа mc_id пуст, а все admin-выборки скоупятся по mc_id из
+// claims — пропусти его через RequireAdmin, и он получил бы пустой/чужой скоуп.
+// Уровни доступа не смешиваются (см. RequireSystemAdmin).
 func (k Kind) IsAdmin() bool {
 	return k == KindAdmin
+}
+
+// IsSystemAdmin — kind = system_admin (платформенный админ нашей компании).
+func (k Kind) IsSystemAdmin() bool {
+	return k == KindSystem
 }
 
 // AllowApartment сообщает, привязан ли владелец claims к квартире apartmentID
