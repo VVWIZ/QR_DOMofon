@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -46,6 +47,12 @@ type Config struct {
 	// VisitorBaseURL — база для сборки инвайт-ссылок онбординга (мок доставки:
 	// ссылка возвращается в ответе API). Dev — Vite-фронт на :5173.
 	VisitorBaseURL string
+
+	// Планировщик авто-открытия (инкремент E). Tick — период reconciler; Lease —
+	// длительность аренды open_relay (должна быть > Tick для перекрытия). Fail-secure:
+	// отказ планировщика → реле закрывается через ≤ Lease.
+	SchedulerTick  time.Duration
+	SchedulerLease time.Duration
 }
 
 // Load загружает .env (если присутствует; отсутствие файла не ошибка) и
@@ -82,6 +89,9 @@ func Load() Config {
 		AuthDevMode: envBool("AUTH_DEV_MODE", false),
 
 		VisitorBaseURL: env("VISITOR_BASE_URL", "http://localhost:5173"),
+
+		SchedulerTick:  envDur("SCHEDULER_TICK", 15*time.Second),
+		SchedulerLease: envDur("SCHEDULER_LEASE", 40*time.Second),
 	}
 }
 
@@ -91,6 +101,20 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envDur парсит длительность (time.ParseDuration, напр. "15s", "40s");
+// отсутствие/пустое/нераспознанное → fallback.
+func envDur(key string, fallback time.Duration) time.Duration {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 // envBool парсит булеву переменную окружения (true/1/yes → true; false/0/no →

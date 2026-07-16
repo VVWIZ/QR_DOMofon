@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // встроенная IANA-база: LoadLocation работает и без zoneinfo ОС (Windows)
 
 	"github.com/go-chi/chi/v5"
 
@@ -33,6 +34,7 @@ import (
 	predis "domofon/backend/internal/platform/redis"
 	"domofon/backend/internal/property"
 	"domofon/backend/internal/qr"
+	"domofon/backend/internal/schedules"
 	"domofon/backend/internal/sysadmin"
 	"domofon/backend/migrations"
 )
@@ -170,6 +172,11 @@ func main() {
 	sysadminSvc := sysadmin.NewService(sysadmin.NewRepo(pool), recorder, log)
 	sysadminHandler := sysadmin.NewHandler(sysadminSvc)
 
+	// --- Планировщик авто-открытия по расписанию (инкремент E) ---
+	schedulesRepo := schedules.NewRepo(pool)
+	schedulesHandler := schedules.NewHandler(schedules.NewService(schedulesRepo, recorder, log))
+	reconciler := schedules.NewReconciler(pool, schedulesRepo, schedulePublisher{commander: commander}, presence, recorder, cfg.SchedulerTick, cfg.SchedulerLease, log)
+
 	// --- Хендлеры ---
 	qrHandler := qr.NewHandler(qrKeyring, qrPropertyAdapter{svc: propertySvc}, presence)
 	callsHandler := calls.NewHandler(callSvc)
@@ -259,6 +266,10 @@ func main() {
 			r.Get("/admin/apartments/{apartment_id}/residents", onboardingHandler.ApartmentResidents)
 			r.Put("/admin/users/{user_id}/grants/{point_public_id}", onboardingHandler.GrantPoint)
 			r.Delete("/admin/users/{user_id}/grants/{point_public_id}", onboardingHandler.RevokePoint)
+			// Расписания авто-открытия (инкремент E): точки+окна, создать, удалить.
+			r.Get("/admin/schedule-points", schedulesHandler.ListPoints)
+			r.Post("/admin/access-points/{public_id}/schedules", schedulesHandler.Create)
+			r.Delete("/admin/schedules/{id}", schedulesHandler.Delete)
 		})
 
 		// --- SystemAdmin-only (платформенная админка: УК/объекты/дома/подъезды) ---
@@ -296,10 +307,16 @@ func main() {
 		}
 	}()
 
+	// Планировщик авто-открытия по расписанию (инкремент E): отдельная горутина,
+	// останавливается по shutdown (отмена schedCtx).
+	schedCtx, stopSched := context.WithCancel(rootCtx)
+	go reconciler.Run(schedCtx)
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	log.Info("shutdown_started")
+	stopSched() // остановить планировщик
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -422,6 +439,20 @@ func (a guestDoorOpener) OpenResolved(ctx context.Context, rp guests.ResolvedPoi
 		return guests.OpenResult{}, apiErr
 	}
 	return guests.OpenResult{RequestID: res.RequestID, Status: res.Status}, nil
+}
+
+// schedulePublisher связывает schedules.Publisher с devices.Commander (аренда
+// open_relay планировщика — та же публикация, что у ручного открытия).
+type schedulePublisher struct{ commander *devices.Commander }
+
+func (a schedulePublisher) PublishOpenRelay(ctx context.Context, deviceID string, cmd schedules.OpenCommand) error {
+	return a.commander.PublishOpenRelay(ctx, deviceID, devices.OpenRelayPayload{
+		RelayID:    cmd.RelayID,
+		DurationMs: cmd.DurationMs,
+		RequestID:  cmd.RequestID,
+		IssuedBy:   cmd.IssuedBy,
+		IssuedAt:   cmd.IssuedAt,
+	})
 }
 
 // commandPublisherAdapter связывает access.CommandPublisher с devices.Commander.
