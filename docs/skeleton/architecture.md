@@ -108,6 +108,10 @@ QR-URL (/v?aid&v=1&kid&sig)
 - `apartments.entrance_id` / `access_points.entrance_id` — **nullable**, композитный `FK (entrance_id, building_id)` (гард «подъезд чужого дома»; NULL пропускается). `building_id` **сохранён везде** — это expand-фаза expand-contract: горячий `property.ResolveByPublicID` джойнит по `building_id` и НЕ изменён. Перевод резолва на подъезды и `entrance_id NOT NULL` (contract-фаза) — **долг инкремента звонковой логики**.
 - `users.full_name`, `invites.full_name` (ФИО, nullable), `invite_access_points` (доп. гранты композитного инвайта; `PK(invite_id, access_point_id)`).
 
+**Инкремент B — гостевой доступ (0007):**
+- `guest_access` (`id`, `token_hash` UNIQUE — только SHA-256, `full_name`, `apartment_id`, `management_company_id`, `created_by FK ON DELETE CASCADE`, `valid_from/valid_to`, `revoked_at/by`; `CHECK valid_to>valid_from`, `CHECK valid_to<=valid_from+2 days`) + `guest_access_points` (`PK(guest_access_id, access_point_id)`). Гость без аккаунта, вход по токену ссылки `/g/{token}`.
+- Доступ **производный**: точки гостя ⊆ доступных создателю (подъезд квартиры по членству ∪ его `user_access_grants`); переспрашивается на КАЖДОМ открытии → отзыв гранта УК мгновенно лишает гостя точки. Открытие переиспользует `access.Service.OpenResolved` (общий «хвост» presence→MQTT→аудит, извлечённый из `OpenPoint`) через consumer-side `guests.DoorOpener` + адаптер в `cmd/server`. Токен-механика продублирована из onboarding (вынос в `platform/token` — долг).
+
 ---
 
 ## 4. Ключевые решения
