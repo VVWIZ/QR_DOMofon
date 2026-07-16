@@ -2,6 +2,7 @@ import type {
   AcceptResponse,
   ApiErrorEnvelope,
   AuthUser,
+  CatalogResponse,
   CreateGrantResponse,
   CreateOwnerResponse,
   DevicesResponse,
@@ -188,16 +189,23 @@ export const api = {
   authMe: () => request<AuthUser>('/auth/me'),
 
   // --- Онбординг: УК-консоль (admin, Bearer добавляется автоматически) ---
-  adminCreateOwner: (apartment_id: string, phone: string) =>
+  adminCatalog: () => request<CatalogResponse>('/admin/catalog'),
+
+  adminCreateOwner: (
+    apartment_id: string,
+    phone: string,
+    full_name: string,
+    access_point_public_ids: string[],
+  ) =>
     request<CreateOwnerResponse>('/admin/owners', {
       method: 'POST',
-      body: JSON.stringify({ apartment_id, phone }),
+      body: JSON.stringify({ apartment_id, phone, full_name, access_point_public_ids }),
     }),
 
-  adminCreateGrant: (access_point_public_id: string, phone: string) =>
+  adminCreateGrant: (access_point_public_id: string, phone: string, full_name: string) =>
     request<CreateGrantResponse>('/admin/access-grants', {
       method: 'POST',
-      body: JSON.stringify({ access_point_public_id, phone }),
+      body: JSON.stringify({ access_point_public_id, phone, full_name }),
     }),
 
   adminListResidents: () => request<ResidentsResponse>('/admin/residents'),

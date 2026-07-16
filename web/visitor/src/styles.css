@@ -417,8 +417,24 @@ h2 {
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
   background: var(--card-2);
 }
-.res-main { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.res-phone { font-weight: 600; }
+.res-main { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.res-name { font-weight: 600; }
+.res-phone { color: var(--muted); font-size: 0.9em; }
+
+/* select + чекбоксы формы */
+.form select {
+  padding: 10px 12px; border-radius: 8px; font: inherit;
+  background: rgba(0, 0, 0, 0.25); color: #f0f3f8;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.form select:disabled { opacity: 0.6; }
+.points-fieldset {
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.points-fieldset legend { font-size: 0.82em; color: var(--muted); padding: 0 6px; }
+.checkbox-row { flex-direction: row !important; align-items: center; gap: 8px; cursor: pointer; }
+.checkbox-row input { width: auto; }
 .res-meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag {
   font-size: 0.72rem; padding: 2px 8px; border-radius: 999px;

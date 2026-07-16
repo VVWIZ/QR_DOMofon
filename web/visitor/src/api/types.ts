@@ -168,6 +168,7 @@ export interface ResidentGrantInfo {
 export interface ResidentInfo {
   user_id: string;
   phone: string;
+  full_name: string;
   kind: UserKind;
   apartments: ResidentApartmentInfo[];
   grants: ResidentGrantInfo[];
@@ -176,6 +177,36 @@ export interface ResidentInfo {
 /** Ответ GET /api/v1/admin/residents (200). */
 export interface ResidentsResponse {
   residents: ResidentInfo[];
+}
+
+// --- Каталог УК (GET /api/v1/admin/catalog) для выпадашек формы ---
+
+export interface CatalogApartment {
+  id: string;
+  number: string;
+}
+
+export interface CatalogEntrance {
+  id: string; // "" → квартиры без подъезда
+  number: string;
+  apartments: CatalogApartment[];
+}
+
+export interface CatalogBuilding {
+  id: string;
+  address: string;
+  entrances: CatalogEntrance[];
+}
+
+export interface CatalogPoint {
+  public_id: string;
+  label: string;
+  type: 'gate' | 'barrier';
+}
+
+export interface CatalogResponse {
+  buildings: CatalogBuilding[];
+  points: CatalogPoint[];
 }
 
 // --- SSE-события GET /api/v1/resident/events ---
