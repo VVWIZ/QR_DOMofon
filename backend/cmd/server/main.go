@@ -227,6 +227,7 @@ func main() {
 			r.Post("/admin/owners", onboardingHandler.CreateOwner)
 			r.Post("/admin/access-grants", onboardingHandler.CreateAccessGrant)
 			r.Get("/admin/residents", onboardingHandler.ListResidents)
+			r.Get("/admin/catalog", onboardingHandler.ListCatalog)
 		})
 	})
 

@@ -7,6 +7,7 @@ package onboarding
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -32,17 +33,21 @@ type acceptRequest struct {
 }
 
 type ownerRequest struct {
-	ApartmentID string `json:"apartment_id"`
-	Phone       string `json:"phone"`
+	ApartmentID          string   `json:"apartment_id"`
+	Phone                string   `json:"phone"`
+	FullName             string   `json:"full_name"`
+	AccessPointPublicIDs []string `json:"access_point_public_ids"` // опц. доп. гранты (композитный инвайт)
 }
 
 type grantRequest struct {
 	AccessPointPublicID string `json:"access_point_public_id"`
 	Phone               string `json:"phone"`
+	FullName            string `json:"full_name"`
 }
 
 type residentInviteRequest struct {
-	Phone string `json:"phone"`
+	Phone    string `json:"phone"`
+	FullName string `json:"full_name"`
 }
 
 // --- Тела ответов ---
@@ -67,6 +72,7 @@ type grantJSON struct {
 type residentJSON struct {
 	UserID     string          `json:"user_id"`
 	Phone      string          `json:"phone"`
+	FullName   string          `json:"full_name"`
 	Kind       string          `json:"kind"`
 	Apartments []apartmentJSON `json:"apartments"`
 	Grants     []grantJSON     `json:"grants"`
@@ -114,11 +120,11 @@ func (h *Handler) CreateOwner(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req, rid) {
 		return
 	}
-	if req.ApartmentID == "" || req.Phone == "" {
-		httpx.WriteError(w, httpx.CodeValidationError, "Fields apartment_id and phone are required", rid)
+	if req.ApartmentID == "" || req.Phone == "" || strings.TrimSpace(req.FullName) == "" {
+		httpx.WriteError(w, httpx.CodeValidationError, "Fields apartment_id, phone and full_name are required", rid)
 		return
 	}
-	res, apiErr := h.svc.CreateOwnerInvite(r.Context(), claims, req.ApartmentID, req.Phone)
+	res, apiErr := h.svc.CreateOwnerInvite(r.Context(), claims, req.ApartmentID, req.Phone, req.FullName, req.AccessPointPublicIDs)
 	if apiErr != nil {
 		httpx.WriteErr(w, r, apiErr)
 		return
@@ -138,11 +144,11 @@ func (h *Handler) CreateAccessGrant(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req, rid) {
 		return
 	}
-	if req.AccessPointPublicID == "" || req.Phone == "" {
-		httpx.WriteError(w, httpx.CodeValidationError, "Fields access_point_public_id and phone are required", rid)
+	if req.AccessPointPublicID == "" || req.Phone == "" || strings.TrimSpace(req.FullName) == "" {
+		httpx.WriteError(w, httpx.CodeValidationError, "Fields access_point_public_id, phone and full_name are required", rid)
 		return
 	}
-	res, apiErr := h.svc.CreateAccessGrant(r.Context(), claims, req.AccessPointPublicID, req.Phone)
+	res, apiErr := h.svc.CreateAccessGrant(r.Context(), claims, req.AccessPointPublicID, req.Phone, req.FullName)
 	if apiErr != nil {
 		httpx.WriteErr(w, r, apiErr)
 		return
@@ -175,6 +181,21 @@ func (h *Handler) ListResidents(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"residents": residentsBody(res)})
 }
 
+// ListCatalog — GET /api/v1/admin/catalog (УК-админ): дерево дом→подъезд→квартира
+// + точки gate/barrier своей УК (для выпадашек формы).
+func (h *Handler) ListCatalog(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	cat, apiErr := h.svc.Catalog(r.Context(), claims)
+	if apiErr != nil {
+		httpx.WriteErr(w, r, apiErr)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, catalogBody(cat))
+}
+
 // InviteResident — POST /api/v1/apartments/{apartment_id}/residents/invite
 // (владелец): инвайт жильца в свою квартиру.
 func (h *Handler) InviteResident(w http.ResponseWriter, r *http.Request) {
@@ -192,11 +213,11 @@ func (h *Handler) InviteResident(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req, rid) {
 		return
 	}
-	if req.Phone == "" {
-		httpx.WriteError(w, httpx.CodeValidationError, "Field phone is required", rid)
+	if req.Phone == "" || strings.TrimSpace(req.FullName) == "" {
+		httpx.WriteError(w, httpx.CodeValidationError, "Fields phone and full_name are required", rid)
 		return
 	}
-	res, apiErr := h.svc.CreateResidentInvite(r.Context(), claims, apartmentID, req.Phone)
+	res, apiErr := h.svc.CreateResidentInvite(r.Context(), claims, apartmentID, req.Phone, req.FullName)
 	if apiErr != nil {
 		httpx.WriteErr(w, r, apiErr)
 		return
@@ -227,6 +248,58 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any, rid string) boo
 	return true
 }
 
+// --- Каталог УК ---
+
+type catalogApartmentJSON struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
+}
+
+type catalogEntranceJSON struct {
+	ID         string                 `json:"id"`
+	Number     string                 `json:"number"`
+	Apartments []catalogApartmentJSON `json:"apartments"`
+}
+
+type catalogBuildingJSON struct {
+	ID        string                `json:"id"`
+	Address   string                `json:"address"`
+	Entrances []catalogEntranceJSON `json:"entrances"`
+}
+
+type catalogPointJSON struct {
+	PublicID string `json:"public_id"`
+	Label    string `json:"label"`
+	Type     string `json:"type"`
+}
+
+type catalogJSON struct {
+	Buildings []catalogBuildingJSON `json:"buildings"`
+	Points    []catalogPointJSON    `json:"points"`
+}
+
+func catalogBody(cat Catalog) catalogJSON {
+	out := catalogJSON{
+		Buildings: make([]catalogBuildingJSON, 0, len(cat.Buildings)),
+		Points:    make([]catalogPointJSON, 0, len(cat.Points)),
+	}
+	for _, b := range cat.Buildings {
+		bj := catalogBuildingJSON{ID: b.ID, Address: b.Address, Entrances: make([]catalogEntranceJSON, 0, len(b.Entrances))}
+		for _, e := range b.Entrances {
+			ej := catalogEntranceJSON{ID: e.ID, Number: e.Number, Apartments: make([]catalogApartmentJSON, 0, len(e.Apartments))}
+			for _, a := range e.Apartments {
+				ej.Apartments = append(ej.Apartments, catalogApartmentJSON{ID: a.ID, Number: a.Number})
+			}
+			bj.Entrances = append(bj.Entrances, ej)
+		}
+		out.Buildings = append(out.Buildings, bj)
+	}
+	for _, p := range cat.Points {
+		out.Points = append(out.Points, catalogPointJSON{PublicID: p.PublicID, Label: p.Label, Type: p.Type})
+	}
+	return out
+}
+
 func inviteBody(res InviteResult) inviteJSON {
 	return inviteJSON{
 		Token:     res.Token,
@@ -249,6 +322,7 @@ func residentsBody(rows []Resident) []residentJSON {
 		out = append(out, residentJSON{
 			UserID:     res.UserID,
 			Phone:      res.Phone,
+			FullName:   res.FullName,
 			Kind:       res.Kind,
 			Apartments: apts,
 			Grants:     grants,

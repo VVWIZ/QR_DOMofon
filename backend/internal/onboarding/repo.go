@@ -35,10 +35,12 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 type NewInvite struct {
 	TokenHash     string
 	Phone         string
-	TargetKind    string // apartment_owner | apartment_resident | access_grant
-	ApartmentID   string // для apartment_*; "" для access_grant
-	AccessPointID string // для access_grant; "" иначе
-	Role          string // owner|resident для apartment_*; "" для access_grant
+	FullName      string   // ФИО адресата (заполняет создатель); "" → NULL
+	TargetKind    string   // apartment_owner | apartment_resident | access_grant
+	ApartmentID   string   // для apartment_*; "" для access_grant
+	AccessPointID string   // для access_grant; "" иначе
+	Role          string   // owner|resident для apartment_*; "" для access_grant
+	GrantPointIDs []string // доп. гранты (внутренние access_points.id), уже провалидированы; только для apartment_*
 	MCID          string
 	CreatedBy     string
 	ExpiresAt     time.Time
@@ -75,26 +77,48 @@ type ResidentGrant struct {
 type Resident struct {
 	UserID     string
 	Phone      string
+	FullName   string
 	Kind       string
 	Apartments []ResidentApartment
 	Grants     []ResidentGrant
 }
 
-// CreateInvite вставляет новый инвайт. Nullable-колонки (phone/apartment_id/
+// CreateInvite вставляет новый инвайт и его доп. гранты (invite_access_points) в
+// одной транзакции. Nullable-колонки (phone/full_name/apartment_id/
 // access_point_id/role) кладутся как NULL при пустом значении.
 func (r *Repo) CreateInvite(ctx context.Context, in NewInvite) error {
-	const q = `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("onboarding: create invite begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	inviteID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO invites
-			(id, token_hash, phone, target_kind, apartment_id, access_point_id,
-			 role, management_company_id, created_by, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-	_, err := r.pool.Exec(ctx, q,
-		uuid.NewString(), in.TokenHash, nullStr(in.Phone), in.TargetKind,
+			(id, token_hash, phone, full_name, target_kind, apartment_id,
+			 access_point_id, role, management_company_id, created_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		inviteID, in.TokenHash, nullStr(in.Phone), nullStr(in.FullName), in.TargetKind,
 		nullStr(in.ApartmentID), nullStr(in.AccessPointID), nullStr(in.Role),
 		in.MCID, in.CreatedBy, in.ExpiresAt,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("onboarding: create invite: %w", err)
+	}
+
+	for _, pointID := range in.GrantPointIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO invite_access_points (invite_id, access_point_id, management_company_id)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (invite_id, access_point_id) DO NOTHING`,
+			inviteID, pointID, in.MCID,
+		); err != nil {
+			return fmt.Errorf("onboarding: create invite point: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("onboarding: create invite commit: %w", err)
 	}
 	return nil
 }
@@ -166,6 +190,19 @@ func (r *Repo) FindUserByPhoneInMC(ctx context.Context, phone, mcID string) (str
 	return id, true, nil
 }
 
+// SetFullNameIfEmpty проставляет ФИО пользователю, только если оно ещё пусто
+// (непустое имя не перезатираем — прямой грант дозаполняет, но не переписывает).
+func (r *Repo) SetFullNameIfEmpty(ctx context.Context, userID, fullName string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE users SET full_name = $1 WHERE id = $2 AND (full_name IS NULL OR full_name = '')`,
+		fullName, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("onboarding: set full name: %w", err)
+	}
+	return nil
+}
+
 // AttachAccessGrant выдаёт пользователю постоянный грант на точку (идемпотентно
 // по UNIQUE(user_id, access_point_id)).
 func (r *Repo) AttachAccessGrant(ctx context.Context, userID, accessPointID, mcID, grantedBy string) error {
@@ -191,6 +228,7 @@ type Accepted struct {
 	MCID          string
 	ApartmentID   string
 	AccessPointID string
+	GrantedPoints int // сколько доп. грантов выдано композитным инвайтом (для аудита)
 }
 
 // AcceptInviteTx атомарно принимает инвайт по token_hash: блокирует строку
@@ -215,19 +253,19 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var (
-		inviteID, targetKind, mcID, createdBy   string
-		phone, apartmentID, accessPointID, role *string
-		usedAt                                  *time.Time
-		expiresAt                               time.Time
+		inviteID, targetKind, mcID, createdBy             string
+		phone, fullName, apartmentID, accessPointID, role *string
+		usedAt                                            *time.Time
+		expiresAt                                         time.Time
 	)
 	const sel = `
-		SELECT id::text, phone, target_kind, apartment_id::text, access_point_id::text,
+		SELECT id::text, phone, full_name, target_kind, apartment_id::text, access_point_id::text,
 		       role, management_company_id::text, created_by::text, used_at, expires_at
 		FROM invites
 		WHERE token_hash = $1
 		FOR UPDATE`
 	err = tx.QueryRow(ctx, sel, tokenHash).Scan(
-		&inviteID, &phone, &targetKind, &apartmentID, &accessPointID,
+		&inviteID, &phone, &fullName, &targetKind, &apartmentID, &accessPointID,
 		&role, &mcID, &createdBy, &usedAt, &expiresAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -305,6 +343,17 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 		}
 	}
 
+	// ФИО из инвайта — дозаполнить, только если у пользователя пусто (непустое
+	// имя не перезатираем; ревью архитектора).
+	if fullName != nil && *fullName != "" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE users SET full_name = $1 WHERE id = $2 AND (full_name IS NULL OR full_name = '')`,
+			*fullName, userID,
+		); err != nil {
+			return Accepted{}, internalErr
+		}
+	}
+
 	// Привязка по типу инвайта (идемпотентно).
 	switch targetKind {
 	case "apartment_owner", "apartment_resident":
@@ -342,6 +391,29 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 		return Accepted{}, httpx.NewError(httpx.CodeInternal, "Unknown invite target")
 	}
 
+	// Композитный инвайт: доп. гранты на калитки/шлагбаумы одной set-based
+	// вставкой (без Go-цикла — детерминированный ORDER BY снимает риск дедлока с
+	// конкурентным AttachAccessGrant/вторым инвайтом, без N раундтрипов). Только
+	// для apartment_*; на мёртвую точку грант не выдаём (JOIN is_active).
+	var grantedPoints int
+	if targetKind == "apartment_owner" || targetKind == "apartment_resident" {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO user_access_grants
+				(id, user_id, access_point_id, management_company_id, granted_by)
+			SELECT gen_random_uuid(), $1, iap.access_point_id, iap.management_company_id, $2
+			FROM invite_access_points iap
+			JOIN access_points ap ON ap.id = iap.access_point_id AND ap.is_active = true
+			WHERE iap.invite_id = $3
+			ORDER BY iap.access_point_id
+			ON CONFLICT (user_id, access_point_id) DO NOTHING`,
+			userID, createdBy, inviteID,
+		)
+		if err != nil {
+			return Accepted{}, internalErr
+		}
+		grantedPoints = int(tag.RowsAffected())
+	}
+
 	// Атомарная пометка used: проигрыш гонки (0 строк) → инвайт уже использован.
 	tag, err := tx.Exec(ctx,
 		`UPDATE invites SET used_at = $1, used_by = $2 WHERE id = $3 AND used_at IS NULL`,
@@ -358,7 +430,13 @@ func (r *Repo) AcceptInviteTx(ctx context.Context, tokenHash string, now time.Ti
 		return Accepted{}, internalErr
 	}
 
-	res := Accepted{UserID: userID, Created: created, TargetKind: targetKind, MCID: mcID}
+	res := Accepted{
+		UserID:        userID,
+		Created:       created,
+		TargetKind:    targetKind,
+		MCID:          mcID,
+		GrantedPoints: grantedPoints,
+	}
 	if apartmentID != nil {
 		res.ApartmentID = *apartmentID
 	}
@@ -425,10 +503,10 @@ func (r *Repo) ListGrantedPoints(ctx context.Context, userID string) ([]access.G
 // и по грантам точек), агрегируя квартиры и гранты по пользователю.
 func (r *Repo) ListResidents(ctx context.Context, mcID string) ([]Resident, error) {
 	byID := map[string]*Resident{}
-	get := func(id, phone, kind string) *Resident {
+	get := func(id, phone, fullName, kind string) *Resident {
 		res, ok := byID[id]
 		if !ok {
-			res = &Resident{UserID: id, Phone: phone, Kind: kind}
+			res = &Resident{UserID: id, Phone: phone, FullName: fullName, Kind: kind}
 			byID[id] = res
 		}
 		return res
@@ -436,7 +514,8 @@ func (r *Repo) ListResidents(ctx context.Context, mcID string) ([]Resident, erro
 
 	// Роли в квартирах УК.
 	const qRoles = `
-		SELECT u.id::text, COALESCE(u.phone, ''), u.kind, a.id::text, a.number, r.role
+		SELECT u.id::text, COALESCE(u.phone, ''), COALESCE(u.full_name, ''), u.kind,
+		       a.id::text, a.number, r.role
 		FROM user_apartment_roles r
 		JOIN users u ON u.id = r.user_id
 		JOIN apartments a ON a.id = r.apartment_id
@@ -447,12 +526,12 @@ func (r *Repo) ListResidents(ctx context.Context, mcID string) ([]Resident, erro
 		return nil, fmt.Errorf("onboarding: list residents roles: %w", err)
 	}
 	for rows.Next() {
-		var uid, phone, kind, aid, number, role string
-		if err := rows.Scan(&uid, &phone, &kind, &aid, &number, &role); err != nil {
+		var uid, phone, fullName, kind, aid, number, role string
+		if err := rows.Scan(&uid, &phone, &fullName, &kind, &aid, &number, &role); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("onboarding: scan resident role: %w", err)
 		}
-		res := get(uid, phone, kind)
+		res := get(uid, phone, fullName, kind)
 		res.Apartments = append(res.Apartments, ResidentApartment{ID: aid, Number: number, Role: role})
 	}
 	rows.Close()
@@ -462,7 +541,8 @@ func (r *Repo) ListResidents(ctx context.Context, mcID string) ([]Resident, erro
 
 	// Гранты точек УК.
 	const qGrants = `
-		SELECT u.id::text, COALESCE(u.phone, ''), u.kind, ap.public_id::text, ap.label
+		SELECT u.id::text, COALESCE(u.phone, ''), COALESCE(u.full_name, ''), u.kind,
+		       ap.public_id::text, ap.label
 		FROM user_access_grants g
 		JOIN users u ON u.id = g.user_id
 		JOIN access_points ap ON ap.id = g.access_point_id
@@ -473,12 +553,12 @@ func (r *Repo) ListResidents(ctx context.Context, mcID string) ([]Resident, erro
 		return nil, fmt.Errorf("onboarding: list residents grants: %w", err)
 	}
 	for grows.Next() {
-		var uid, phone, kind, publicID, label string
-		if err := grows.Scan(&uid, &phone, &kind, &publicID, &label); err != nil {
+		var uid, phone, fullName, kind, publicID, label string
+		if err := grows.Scan(&uid, &phone, &fullName, &kind, &publicID, &label); err != nil {
 			grows.Close()
 			return nil, fmt.Errorf("onboarding: scan resident grant: %w", err)
 		}
-		res := get(uid, phone, kind)
+		res := get(uid, phone, fullName, kind)
 		res.Grants = append(res.Grants, ResidentGrant{PublicID: publicID, Label: label})
 	}
 	grows.Close()
@@ -497,6 +577,109 @@ func (r *Repo) ListResidents(ctx context.Context, mcID string) ([]Resident, erro
 		return out[i].UserID < out[j].UserID
 	})
 	return out, nil
+}
+
+// --- Каталог УК (для выпадашек формы: дом → подъезд → квартира + точки) ---
+
+// CatalogApartment / CatalogEntrance / CatalogBuilding — дерево объектов УК.
+type CatalogApartment struct {
+	ID     string
+	Number string
+}
+
+type CatalogEntrance struct {
+	ID         string // "" → квартиры без подъезда (back-compat)
+	Number     string
+	Apartments []CatalogApartment
+}
+
+type CatalogBuilding struct {
+	ID        string
+	Address   string
+	Entrances []CatalogEntrance
+}
+
+// CatalogPoint — точка gate/barrier УК (для чекбоксов доступов).
+type CatalogPoint struct {
+	PublicID string
+	Label    string
+	Type     string
+}
+
+// Catalog — каталог объектов УК.
+type Catalog struct {
+	Buildings []CatalogBuilding
+	Points    []CatalogPoint
+}
+
+// Catalog возвращает дерево дом→подъезд→квартира и список точек gate/barrier УК
+// mcID (для формы создания владельца/грантов). Скоуп по management_company_id.
+func (r *Repo) Catalog(ctx context.Context, mcID string) (Catalog, error) {
+	var cat Catalog
+
+	const qApts = `
+		SELECT b.id::text, b.address,
+		       COALESCE(e.id::text, ''), COALESCE(e.number, ''),
+		       a.id::text, a.number
+		FROM apartments a
+		JOIN buildings b ON b.id = a.building_id
+		LEFT JOIN entrances e ON e.id = a.entrance_id
+		WHERE a.management_company_id = $1 AND a.is_active = true
+		ORDER BY b.address, COALESCE(e.number, ''), a.number`
+	rows, err := r.pool.Query(ctx, qApts, mcID)
+	if err != nil {
+		return Catalog{}, fmt.Errorf("onboarding: catalog apartments: %w", err)
+	}
+	defer rows.Close()
+
+	bIdx := map[string]int{}            // building_id → индекс в cat.Buildings
+	eIdx := map[string]map[string]int{} // building_id → entrance_id → индекс в Entrances
+	for rows.Next() {
+		var bid, addr, eid, enum, aid, anum string
+		if err := rows.Scan(&bid, &addr, &eid, &enum, &aid, &anum); err != nil {
+			return Catalog{}, fmt.Errorf("onboarding: scan catalog apt: %w", err)
+		}
+		bi, ok := bIdx[bid]
+		if !ok {
+			bi = len(cat.Buildings)
+			bIdx[bid] = bi
+			cat.Buildings = append(cat.Buildings, CatalogBuilding{ID: bid, Address: addr})
+			eIdx[bid] = map[string]int{}
+		}
+		ei, ok := eIdx[bid][eid]
+		if !ok {
+			ei = len(cat.Buildings[bi].Entrances)
+			eIdx[bid][eid] = ei
+			cat.Buildings[bi].Entrances = append(cat.Buildings[bi].Entrances, CatalogEntrance{ID: eid, Number: enum})
+		}
+		ent := &cat.Buildings[bi].Entrances[ei]
+		ent.Apartments = append(ent.Apartments, CatalogApartment{ID: aid, Number: anum})
+	}
+	if err := rows.Err(); err != nil {
+		return Catalog{}, fmt.Errorf("onboarding: rows catalog apt: %w", err)
+	}
+
+	const qPoints = `
+		SELECT public_id::text, label, type
+		FROM access_points
+		WHERE management_company_id = $1 AND is_active = true AND type IN ('gate', 'barrier')
+		ORDER BY label`
+	prows, err := r.pool.Query(ctx, qPoints, mcID)
+	if err != nil {
+		return Catalog{}, fmt.Errorf("onboarding: catalog points: %w", err)
+	}
+	defer prows.Close()
+	for prows.Next() {
+		var p CatalogPoint
+		if err := prows.Scan(&p.PublicID, &p.Label, &p.Type); err != nil {
+			return Catalog{}, fmt.Errorf("onboarding: scan catalog point: %w", err)
+		}
+		cat.Points = append(cat.Points, p)
+	}
+	if err := prows.Err(); err != nil {
+		return Catalog{}, fmt.Errorf("onboarding: rows catalog point: %w", err)
+	}
+	return cat, nil
 }
 
 // nullStr возвращает nil для пустой строки (→ SQL NULL), иначе саму строку.

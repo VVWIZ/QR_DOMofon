@@ -85,8 +85,10 @@ type AcceptResult struct {
 	Login   auth.LoginResult
 }
 
-// CreateOwnerInvite (УК-админ) создаёт инвайт владельца на квартиру своей УК.
-func (s *Service) CreateOwnerInvite(ctx context.Context, claims auth.Claims, apartmentID, phone string) (InviteResult, *httpx.Error) {
+// CreateOwnerInvite (УК-админ) создаёт инвайт владельца на квартиру своей УК +
+// опционально доп. гранты на калитки/шлагбаумы (композитный инвайт: одна ссылка =
+// квартира + N точек). grantPublicIDs — публичные id точек gate/barrier своей УК.
+func (s *Service) CreateOwnerInvite(ctx context.Context, claims auth.Claims, apartmentID, phone, fullName string, grantPublicIDs []string) (InviteResult, *httpx.Error) {
 	phone = NormalizePhone(phone)
 	if phone == "" {
 		return InviteResult{}, httpx.NewError(httpx.CodeValidationError, "Field phone is invalid")
@@ -100,18 +102,24 @@ func (s *Service) CreateOwnerInvite(ctx context.Context, claims auth.Claims, apa
 	if !ok || apt.MCID != claims.MCID {
 		return InviteResult{}, httpx.NewError(httpx.CodeValidationError, "Apartment not found")
 	}
+	pointIDs, apiErr := s.resolveGrantPoints(ctx, claims, grantPublicIDs)
+	if apiErr != nil {
+		return InviteResult{}, apiErr
+	}
 	return s.createInvite(ctx, claims, NewInvite{
-		Phone:       phone,
-		TargetKind:  "apartment_owner",
-		ApartmentID: apartmentID,
-		Role:        "owner",
-		MCID:        apt.MCID,
-		CreatedBy:   claims.Subject,
+		Phone:         phone,
+		FullName:      strings.TrimSpace(fullName),
+		TargetKind:    "apartment_owner",
+		ApartmentID:   apartmentID,
+		Role:          "owner",
+		GrantPointIDs: pointIDs,
+		MCID:          apt.MCID,
+		CreatedBy:     claims.Subject,
 	})
 }
 
 // CreateResidentInvite (владелец) создаёт инвайт жильца в СВОЮ квартиру.
-func (s *Service) CreateResidentInvite(ctx context.Context, claims auth.Claims, apartmentID, phone string) (InviteResult, *httpx.Error) {
+func (s *Service) CreateResidentInvite(ctx context.Context, claims auth.Claims, apartmentID, phone, fullName string) (InviteResult, *httpx.Error) {
 	if !CanInviteToApartment(claims, apartmentID) {
 		return InviteResult{}, httpx.NewError(httpx.CodeForbidden, "You are not the owner of this apartment")
 	}
@@ -128,6 +136,7 @@ func (s *Service) CreateResidentInvite(ctx context.Context, claims auth.Claims, 
 	}
 	return s.createInvite(ctx, claims, NewInvite{
 		Phone:       phone,
+		FullName:    strings.TrimSpace(fullName),
 		TargetKind:  "apartment_resident",
 		ApartmentID: apartmentID,
 		Role:        "resident",
@@ -136,10 +145,35 @@ func (s *Service) CreateResidentInvite(ctx context.Context, claims auth.Claims, 
 	})
 }
 
+// resolveGrantPoints валидирует список публичных id доп. точек композитного
+// инвайта (нормализация/кэп/дедуп → каждая точка обязана быть gate/barrier своей
+// УК) и возвращает их внутренние access_points.id. Пустой список — валиден.
+func (s *Service) resolveGrantPoints(ctx context.Context, claims auth.Claims, grantPublicIDs []string) ([]string, *httpx.Error) {
+	clean, apiErr := NormalizeGrantPublicIDs(grantPublicIDs)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	ids := make([]string, 0, len(clean))
+	for _, pid := range clean {
+		ap, ok, err := s.repo.GetAccessPoint(ctx, pid)
+		if err != nil {
+			return nil, s.internal("get_access_point_failed", err)
+		}
+		if !ok || ap.MCID != claims.MCID {
+			return nil, httpx.NewError(httpx.CodeValidationError, "Access point not found")
+		}
+		if ap.Type != "gate" && ap.Type != "barrier" {
+			return nil, httpx.NewError(httpx.CodeValidationError, "Access point is not a gate or barrier")
+		}
+		ids = append(ids, ap.ID)
+	}
+	return ids, nil
+}
+
 // CreateAccessGrant (УК-админ) выдаёт доступ на калитку/шлагбаум своей УК. Если
 // пользователь с таким телефоном уже в УК — грант выдаётся сразу; иначе
 // выпускается инвайт для активации.
-func (s *Service) CreateAccessGrant(ctx context.Context, claims auth.Claims, accessPointPublicID, phone string) (GrantResult, *httpx.Error) {
+func (s *Service) CreateAccessGrant(ctx context.Context, claims auth.Claims, accessPointPublicID, phone, fullName string) (GrantResult, *httpx.Error) {
 	phone = NormalizePhone(phone)
 	if phone == "" {
 		return GrantResult{}, httpx.NewError(httpx.CodeValidationError, "Field phone is invalid")
@@ -164,6 +198,12 @@ func (s *Service) CreateAccessGrant(ctx context.Context, claims auth.Claims, acc
 		if err := s.repo.AttachAccessGrant(ctx, userID, ap.ID, ap.MCID, claims.Subject); err != nil {
 			return GrantResult{}, s.internal("attach_grant_failed", err)
 		}
+		// ФИО дозаполняем, только если у пользователя пусто.
+		if fn := strings.TrimSpace(fullName); fn != "" {
+			if err := s.repo.SetFullNameIfEmpty(ctx, userID, fn); err != nil {
+				return GrantResult{}, s.internal("set_full_name_failed", err)
+			}
+		}
 		s.record(ctx, audit.Event{
 			EventType:           "access_grant_created",
 			Actor:               "user:" + claims.Subject,
@@ -176,6 +216,7 @@ func (s *Service) CreateAccessGrant(ctx context.Context, claims auth.Claims, acc
 
 	inv, apiErr := s.createInvite(ctx, claims, NewInvite{
 		Phone:         phone,
+		FullName:      strings.TrimSpace(fullName),
 		TargetKind:    "access_grant",
 		AccessPointID: ap.ID,
 		MCID:          ap.MCID,
@@ -185,6 +226,16 @@ func (s *Service) CreateAccessGrant(ctx context.Context, claims auth.Claims, acc
 		return GrantResult{}, apiErr
 	}
 	return GrantResult{Granted: false, Invite: &inv}, nil
+}
+
+// Catalog возвращает дерево объектов УК (дом→подъезд→квартира + точки gate/barrier)
+// для выпадашек формы создания владельца/грантов.
+func (s *Service) Catalog(ctx context.Context, claims auth.Claims) (Catalog, *httpx.Error) {
+	cat, err := s.repo.Catalog(ctx, claims.MCID)
+	if err != nil {
+		return Catalog{}, s.internal("catalog_failed", err)
+	}
+	return cat, nil
 }
 
 // AcceptInvite принимает инвайт по секрет-токену: создаёт/находит пользователя и
@@ -204,7 +255,11 @@ func (s *Service) AcceptInvite(ctx context.Context, rawToken string) (AcceptResu
 		ApartmentID:         acc.ApartmentID,
 		AccessPointID:       acc.AccessPointID,
 		ManagementCompanyID: acc.MCID,
-		Metadata:            map[string]any{"target_kind": acc.TargetKind, "user_created": acc.Created},
+		Metadata: map[string]any{
+			"target_kind":    acc.TargetKind,
+			"user_created":   acc.Created,
+			"granted_points": acc.GrantedPoints,
+		},
 	})
 
 	if !acc.Created {
