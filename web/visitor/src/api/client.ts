@@ -18,6 +18,7 @@ import type {
   QrParams,
   RefreshResponse,
   ResidentsResponse,
+  SchedulePointsResponse,
   SysCatalogResponse,
   SysCreateAdminResponse,
   SysCreateIdResponse,
@@ -239,6 +240,21 @@ export const api = {
       `/admin/users/${encodeURIComponent(userId)}/grants/${encodeURIComponent(publicId)}`,
       { method: 'DELETE' },
     ),
+
+  // --- Расписания авто-открытия (инкремент E) ---
+  adminSchedulePoints: () => request<SchedulePointsResponse>('/admin/schedule-points'),
+
+  adminCreateSchedule: (
+    publicId: string,
+    body: { dow: number; opens: string; closes: string; timezone: string },
+  ) =>
+    request<{ id: string }>(
+      `/admin/access-points/${encodeURIComponent(publicId)}/schedules`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  adminDeleteSchedule: (id: string) =>
+    request<{ deleted: boolean }>(`/admin/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // --- Платформенная админка (/system, роль system_admin) ---
   sysListMCs: () => request<SysMCsResponse>('/system/management-companies'),

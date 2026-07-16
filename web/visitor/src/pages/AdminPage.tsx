@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, errorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { SchedulesPanel } from '../components/SchedulesPanel';
 import type {
   AdminSite,
   CatalogResponse,
@@ -296,6 +297,7 @@ export function AdminPage() {
   const [sites, setSites] = useState<AdminSite[]>([]);
   const [siteId, setSiteId] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [showSchedules, setShowSchedules] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -332,6 +334,7 @@ export function AdminPage() {
             {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button className="btn primary small" onClick={() => setShowCreate((v) => !v)}>+ Владелец</button>
+          <button className="btn ghost small" onClick={() => setShowSchedules((v) => !v)}>Калитки/Шлагбаумы</button>
           <button className="btn ghost small" onClick={doLogout}>Выйти</button>
         </div>
       </div>
@@ -339,6 +342,8 @@ export function AdminPage() {
       {err && <p className="err-text">{err}</p>}
 
       {showCreate && <div style={{ marginBottom: 16 }}><CreateOwnerForm catalog={catalog} onClose={() => setShowCreate(false)} /></div>}
+
+      {showSchedules && <div style={{ marginBottom: 16 }}><SchedulesPanel onClose={() => setShowSchedules(false)} /></div>}
 
       {siteId ? <MatrixView key={siteId} siteId={siteId} /> : <p className="muted">Создайте объект в платформенной админке.</p>}
 

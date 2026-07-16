@@ -220,6 +220,26 @@ export interface ApartmentResidentsResponse {
   residents: MatrixResident[];
 }
 
+// --- Расписания авто-открытия (инкремент E) ---
+
+export interface ScheduleRow {
+  id: string;
+  dow: number; // 0=вс … 6=сб
+  opens: string; // "HH:MM"
+  closes: string;
+  timezone: string;
+  is_active: boolean;
+}
+export interface SchedulePoint {
+  public_id: string;
+  label: string;
+  type: 'gate' | 'barrier';
+  schedules: ScheduleRow[];
+}
+export interface SchedulePointsResponse {
+  points: SchedulePoint[];
+}
+
 // --- Каталог УК (GET /api/v1/admin/catalog) для выпадашек формы ---
 
 export interface CatalogApartment {
