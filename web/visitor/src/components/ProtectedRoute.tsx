@@ -12,12 +12,14 @@ export function ProtectedRoute({
   children,
   requireResident = false,
   requireAdmin = false,
+  requireSystem = false,
 }: {
   children: ReactNode;
   requireResident?: boolean;
   requireAdmin?: boolean;
+  requireSystem?: boolean;
 }) {
-  const { status, isResident, isAdmin } = useAuth();
+  const { status, isResident, isAdmin, isSystem } = useAuth();
 
   if (status === 'loading') {
     return (
@@ -29,7 +31,8 @@ export function ProtectedRoute({
   if (
     status === 'anon' ||
     (requireResident && !isResident) ||
-    (requireAdmin && !isAdmin)
+    (requireAdmin && !isAdmin) ||
+    (requireSystem && !isSystem)
   ) {
     return <Navigate to="/login" replace />;
   }

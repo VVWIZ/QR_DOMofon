@@ -345,6 +345,27 @@ h2 {
   color: var(--primary);
 }
 
+/* --- SystemAdmin page --- */
+.page.admin.sys { max-width: 1100px; }
+.sys-grid { grid-template-columns: minmax(0, 320px) minmax(0, 1fr); }
+@media (max-width: 720px) { .sys-grid { grid-template-columns: 1fr; } }
+.mc-list { display: flex; flex-direction: column; gap: 6px; }
+.mc-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border-radius: 10px; cursor: pointer; text-align: left;
+  background: var(--card-2); color: inherit; border: 1px solid var(--line); font: inherit;
+}
+.mc-row.active { border-color: var(--primary); background: rgba(90, 160, 255, 0.12); }
+.sys-tree { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 18px; }
+.sys-site { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--card-2); }
+.sys-site-head { font-weight: 600; margin-bottom: 4px; }
+.sys-building { padding: 3px 0 3px 12px; font-size: 0.92rem; }
+.sys-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 640px) { .sys-forms { grid-template-columns: 1fr; } }
+.sys-forms h3 { margin: 0 0 2px; font-size: 0.95rem; }
+.sys-forms .form select { padding: 10px 12px; border-radius: 8px; font: inherit;
+  background: rgba(0,0,0,0.25); color: #f0f3f8; border: 1px solid rgba(255,255,255,0.14); }
+
 /* --- Guest page --- */
 .page.guest { justify-content: flex-start; padding-top: 32px; }
 .guest-points { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }

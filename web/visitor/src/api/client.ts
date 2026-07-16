@@ -15,6 +15,10 @@ import type {
   QrParams,
   RefreshResponse,
   ResidentsResponse,
+  SysCatalogResponse,
+  SysCreateAdminResponse,
+  SysCreateIdResponse,
+  SysMCsResponse,
   ValidateResponse,
 } from './types';
 import {
@@ -211,6 +215,42 @@ export const api = {
     }),
 
   adminListResidents: () => request<ResidentsResponse>('/admin/residents'),
+
+  // --- Платформенная админка (/system, роль system_admin) ---
+  sysListMCs: () => request<SysMCsResponse>('/system/management-companies'),
+
+  sysCreateMC: (name: string) =>
+    request<SysCreateIdResponse>('/system/management-companies', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  sysCreateMCAdmin: (mcId: string, email: string, full_name: string, password: string) =>
+    request<SysCreateAdminResponse>(
+      `/system/management-companies/${encodeURIComponent(mcId)}/admins`,
+      { method: 'POST', body: JSON.stringify({ email, full_name, password }) },
+    ),
+
+  sysCatalog: (mcId: string) =>
+    request<SysCatalogResponse>(`/system/management-companies/${encodeURIComponent(mcId)}/catalog`),
+
+  sysCreateSite: (mc_id: string, name: string, address: string, kind: string) =>
+    request<SysCreateIdResponse>('/system/sites', {
+      method: 'POST',
+      body: JSON.stringify({ mc_id, name, address, kind }),
+    }),
+
+  sysCreateBuilding: (site_id: string, address: string) =>
+    request<SysCreateIdResponse>('/system/buildings', {
+      method: 'POST',
+      body: JSON.stringify({ site_id, address }),
+    }),
+
+  sysCreateEntrance: (building_id: string, number: string) =>
+    request<SysCreateIdResponse>('/system/entrances', {
+      method: 'POST',
+      body: JSON.stringify({ building_id, number }),
+    }),
 
   // --- Гостевая ссылка (публичная, без Bearer) ---
   guestView: (token: string) =>

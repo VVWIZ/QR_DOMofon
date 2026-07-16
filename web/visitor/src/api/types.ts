@@ -26,7 +26,7 @@ export type ApiErrorCode =
 
 // --- Auth (auth.md, api.md «Аутентификация») ---
 
-export type UserKind = 'resident' | 'owner' | 'mc_admin';
+export type UserKind = 'resident' | 'owner' | 'mc_admin' | 'system_admin';
 
 export interface AuthApartment {
   id: string;
@@ -207,6 +207,44 @@ export interface CatalogPoint {
 export interface CatalogResponse {
   buildings: CatalogBuilding[];
   points: CatalogPoint[];
+}
+
+// --- Платформенная админка (/system, роль system_admin) ---
+
+export interface SysMC {
+  id: string;
+  name: string;
+  sites: number;
+  buildings: number;
+}
+export interface SysMCsResponse {
+  management_companies: SysMC[];
+}
+export interface SysCreateIdResponse {
+  id: string;
+}
+export interface SysCreateAdminResponse {
+  user_id: string;
+  otpauth_url: string;
+}
+export interface SysEntrance {
+  id: string;
+  number: string;
+}
+export interface SysBuilding {
+  id: string;
+  address: string;
+  entrances: SysEntrance[];
+}
+export interface SysSite {
+  id: string;
+  name: string;
+  address: string;
+  kind: 'complex' | 'standalone';
+  buildings: SysBuilding[];
+}
+export interface SysCatalogResponse {
+  sites: SysSite[];
 }
 
 // --- Гостевой доступ (публичная страница /g/{token}) ---

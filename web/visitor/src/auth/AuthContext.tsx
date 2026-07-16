@@ -17,9 +17,10 @@ interface AuthCtx {
   user: AuthUser | null;
   isResident: boolean;
   isAdmin: boolean;
+  isSystem: boolean;
   otpSend: (phone: string) => Promise<OtpSendResponse>;
   otpVerify: (phone: string, code: string) => Promise<void>;
-  adminLogin: (email: string, password: string, totp: string) => Promise<void>;
+  adminLogin: (email: string, password: string, totp: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
 }
 
@@ -77,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(r.access_token);
     setUser(r.user);
     setStatus('authed');
+    return r.user;
   }, []);
 
   const logout = useCallback(async () => {
@@ -92,10 +94,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isResident = user?.kind === 'resident' || user?.kind === 'owner';
   const isAdmin = user?.kind === 'mc_admin';
+  const isSystem = user?.kind === 'system_admin';
 
   return (
     <Ctx.Provider
-      value={{ status, user, isResident, isAdmin, otpSend, otpVerify, adminLogin, logout }}
+      value={{ status, user, isResident, isAdmin, isSystem, otpSend, otpVerify, adminLogin, logout }}
     >
       {children}
     </Ctx.Provider>

@@ -3,6 +3,7 @@ import { VisitorPage } from './pages/VisitorPage';
 import { ResidentPage } from './pages/ResidentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
+import { SystemAdminPage } from './pages/SystemAdminPage';
 import { GuestPage } from './pages/GuestPage';
 import { AuthProvider } from './auth/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -53,6 +54,14 @@ export function App() {
           element={
             <ProtectedRoute requireAdmin>
               <AdminPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/system"
+          element={
+            <ProtectedRoute requireSystem>
+              <SystemAdminPage />
             </ProtectedRoute>
           }
         />

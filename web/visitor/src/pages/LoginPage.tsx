@@ -63,8 +63,8 @@ export function LoginPage() {
     setBusy(true);
     setErr(null);
     try {
-      await adminLogin(email.trim(), password, totp.trim());
-      nav('/admin', { replace: true });
+      const u = await adminLogin(email.trim(), password, totp.trim());
+      nav(u.kind === 'system_admin' ? '/system' : '/admin', { replace: true });
     } catch (e) {
       setErr(mapErr(e));
     } finally {
