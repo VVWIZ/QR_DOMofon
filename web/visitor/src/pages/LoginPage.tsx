@@ -179,13 +179,13 @@ export function LoginPage() {
                 value={totp}
                 disabled={busy}
                 onChange={(e) => setTotp(e.target.value)}
-                placeholder="6 цифр"
+                placeholder="6 цифр (в dev можно пусто)"
               />
             </label>
             <button
               className="btn success big"
               onClick={doAdmin}
-              disabled={busy || !password || !totp}
+              disabled={busy || !password}
             >
               {busy ? 'Проверка…' : 'Войти'}
             </button>

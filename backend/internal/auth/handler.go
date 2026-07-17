@@ -125,8 +125,10 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req, rid) {
 		return
 	}
-	if req.Email == "" || req.Password == "" || req.TOTPCode == "" {
-		httpx.WriteError(w, httpx.CodeValidationError, "Fields email, password and totp_code are required", rid)
+	// totp_code обязателен по факту только вне dev-режима (проверка 2FA — в сервисе,
+	// пропускается при AUTH_DEV_MODE). Здесь требуем только email+пароль.
+	if req.Email == "" || req.Password == "" {
+		httpx.WriteError(w, httpx.CodeValidationError, "Fields email and password are required", rid)
 		return
 	}
 

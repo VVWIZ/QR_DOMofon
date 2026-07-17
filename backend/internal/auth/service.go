@@ -147,7 +147,10 @@ func (s *Service) AdminLogin(ctx context.Context, email, password, totpCode stri
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
 		return LoginResult{}, unauth
 	}
-	if !VerifyTOTP(user.TOTPSecret, totpCode, s.now()) {
+	// TOTP обязателен в проде. В AUTH_DEV_MODE проверка 2FA пропускается (удобство
+	// локального тестирования; тем же флагом уже включён dev-keypair — НЕ ДЛЯ ПРОД).
+	// Пароль остаётся обязательным всегда.
+	if !s.devMode && !VerifyTOTP(user.TOTPSecret, totpCode, s.now()) {
 		return LoginResult{}, unauth
 	}
 
