@@ -1,6 +1,11 @@
 # HANDOFF — QR-домофонная система
 
-**Дата:** 2026-07-17 · **Репозиторий:** github.com/VVWIZ/QR_DOMofon · **Ветка:** `main` (синхронна с origin) · **ТЗ:** v1.3
+**Дата:** 2026-07-17 · **Ветка:** `main` (синхронна с origin) · **ТЗ:** v1.3
+
+**Git:**
+- Remote (origin): `https://github.com/VVWIZ/QR_DOMofon.git`
+- Клонировать: `git clone https://github.com/VVWIZ/QR_DOMofon.git`
+- Локальный путь (dev-машина): `C:\claude\lenovo\QR Domofon`
 
 Стартовая точка для продолжения работы. Полный контекст: [RUNBOOK.md](RUNBOOK.md) (запуск),
 [skeleton/api.md](skeleton/api.md) (контракты API), [skeleton/architecture.md](skeleton/architecture.md)
